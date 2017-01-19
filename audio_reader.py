@@ -1,3 +1,5 @@
+# Imported from ibab's wavenet.
+#
 import fnmatch
 import os
 import re
@@ -113,6 +115,7 @@ class AudioReader(object):
                 else:
                     sess.run(self.enqueue,
                              feed_dict={self.sample_placeholder: audio})
+            print "EPOCH completed"
 
     def start_threads(self, sess, n_threads=1):
         for _ in range(n_threads):

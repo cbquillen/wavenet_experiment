@@ -1,3 +1,9 @@
+from __future__ import division
+
+#
+# wavenet routines, some borrowed from ibab's wavenet implementation
+#
+
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from tensorflow.contrib.framework import arg_scope, add_arg_scope
@@ -23,13 +29,39 @@ def causal_atrous_conv1d(*args, **kwargs):
     # From experiment, 2-point convolutions are not causal. That means
     # that even-with stencils need to be treated like the next
     # larger odd filter.  This should be correct:
-    pad_amount = (kwargs['kernel_size']*rate)//2
+    pad_amount = (kwargs['kernel_size']//2*rate)
     inputs = kwargs['inputs']
 
     # The inputs are a three-dimensional tensor, because of the channels and output dimensions.
     assert len(inputs.get_shape()) == 3	 # rank 3!
 
-    inputs = tf.pad(inputs, [[0, 0], [pad_amount, 0], [0, 0]])
-    out = layers.convolution(kwargs)
-    return tf.slice(out, [0, 0, 0], [-1, tf.shape(inputs)[1], -1])
+    with tf.name_scope(kwargs['scope']+'_pad'):
+        inputs = tf.pad(inputs, [[0, 0], [pad_amount, 0], [0, 0]])
+    kwargs['inputs'] = inputs
+    out = layers.convolution(**kwargs)
+    with tf.name_scope(kwargs['scope']+'_slice'):
+        out = out[:, 0:-pad_amount, :]
+    return out
+
+def mu_law_encode(audio, quantization_channels):
+    '''Quantizes waveform amplitudes.'''
+    with tf.name_scope('encode'):
+        mu = quantization_channels - 1
+        # Perform mu-law companding transformation (ITU-T, 1988).
+        audio = tf.clip_by_value(audio, -1.0, 1.0)
+        magnitude = tf.log(1.0 + mu * tf.abs(audio)) / tf.log(1.0 + mu)
+        signal = tf.sign(audio) * magnitude
+        # Quantize signal to the specified number of levels.
+        return tf.cast((signal + 1.0) / 2.0 * mu + 0.5, tf.int32)
+
+def mu_law_decode(output, quantization_channels):
+    '''Recovers waveform from quantized values.'''
+    with tf.name_scope('decode'):
+        mu = quantization_channels - 1
+        # Map values back to [-1, 1].
+        casted = tf.cast(output, tf.float32)
+        signal = 2 * (casted / mu) - 1
+        # Perform inverse of mu-law transformation.
+        magnitude = (1 / mu) * ((1 + mu)**abs(signal) - 1)
+        return tf.sign(signal) * magnitude
 
