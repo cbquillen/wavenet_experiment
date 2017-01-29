@@ -8,22 +8,23 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from tensorflow.contrib.framework import arg_scope, add_arg_scope
 
+
 @add_arg_scope
 def causal_atrous_conv1d(*args, **kwargs):
     '''
     Make convolution causal by shifting the output right
     by the correct number of samples.  This happens in
     two stages:
-    	1) pad the input to the left by half the (kernel size-1).
-	2) extract the right part of the enlarged output.
+        1) pad the input to the left by half the (kernel size-1).
+        2) extract the right part of the enlarged output.
     '''
     # Only three arguments are allowed un-named.  The first three:
     if len(args) > 0:
-	kwargs['inputs'] = args[0]
+        kwargs['inputs'] = args[0]
     if len(args) > 1:
-	kwargs['num_outputs'] = args[1]
+        kwargs['num_outputs'] = args[1]
     if len(args) > 2:
-	kwargs['kernel_size'] = args[2]
+        kwargs['kernel_size'] = args[2]
 
     rate = kwargs['rate']
     # From experiment, 2-point convolutions are not causal. That means
@@ -32,8 +33,9 @@ def causal_atrous_conv1d(*args, **kwargs):
     pad_amount = (kwargs['kernel_size']//2*rate)
     inputs = kwargs['inputs']
 
-    # The inputs are a three-dimensional tensor, because of the channels and output dimensions.
-    assert len(inputs.get_shape()) == 3	 # rank 3!
+    # The inputs are a three-dimensional tensor,
+    # because of the channels and output dimensions.
+    assert len(inputs.get_shape()) == 3  # rank 3!
 
     with tf.name_scope(kwargs['scope']+'_pad'):
         inputs = tf.pad(inputs, [[0, 0], [pad_amount, 0], [0, 0]])
@@ -42,6 +44,7 @@ def causal_atrous_conv1d(*args, **kwargs):
     with tf.name_scope(kwargs['scope']+'_slice'):
         out = out[:, 0:-pad_amount, :]
     return out
+
 
 def mu_law_encode(audio, quantization_channels):
     '''Quantizes waveform amplitudes.'''
@@ -54,6 +57,7 @@ def mu_law_encode(audio, quantization_channels):
         # Quantize signal to the specified number of levels.
         return tf.cast((signal + 1.0) / 2.0 * mu + 0.5, tf.int32)
 
+
 def mu_law_decode(output, quantization_channels):
     '''Recovers waveform from quantized values.'''
     with tf.name_scope('decode'):
@@ -64,4 +68,3 @@ def mu_law_decode(output, quantization_channels):
         # Perform inverse of mu-law transformation.
         magnitude = (1 / mu) * ((1 + mu)**abs(signal) - 1)
         return tf.sign(signal) * magnitude
-
