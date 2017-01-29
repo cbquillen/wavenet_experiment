@@ -8,6 +8,7 @@ Carl Quillen
 import optparse
 import sys
 import time
+from operator import mul
 
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
@@ -114,10 +115,10 @@ def wavenet(inputs, num_outputs, dilations, atrous_kernel_size,
         is_training = True, reuse = False):
 
     # Parameters for batch normalization
-    bn_params = {}
+    normalizer_params = {}
     if opts.batch_norm:
         normalizer_params = {
-            'normalization_fn': layers.batch_norm,
+            'normalizer_fn': layers.batch_norm,
             'normalizer_params' : {
                      'is_training' : is_training,
                      'reuse' : reuse,
@@ -135,7 +136,7 @@ def wavenet(inputs, num_outputs, dilations, atrous_kernel_size,
     # The arg_scope below will apply to all convolutions, including the ones
     # in resnet_block().
     with arg_scope([causal_atrous_conv1d, layers.convolution],
-            reuse = reuse, padding='SAME', **bn_params):
+            reuse = reuse, padding='SAME', **normalizer_params):
 
         x = causal_atrous_conv1d(x, num_outputs = num_outputs,
             kernel_size = opts.input_kernel_size, rate = 1,
@@ -198,6 +199,15 @@ init = tf.global_variables_initializer()
 # this is good for avoiding memory leaks.
 tf.get_default_graph().finalize()
 
+print "Model variables:"
+total_params = 0
+for var in tf.trainable_variables():
+    vshape = var.get_shape().as_list()
+    total_params += reduce(mul, vshape)
+    print "  ", var.name, vshape
+print "Total model parameters:", total_params
+sys.stdout.flush()
+
 if opts.logdir is not None:
     summary_writer = tf.summary.FileWriter(logdir = opts.logdir,
         graph = tf.get_default_graph())
@@ -226,7 +236,7 @@ for global_step in xrange(opts.max_steps):
                         feed_dict = { learning_rate : cur_lr,
                                       adams_epsilon : opts.epsilon })[0]
     new_time = time.time()
-    print "loss[{}]: {} dt {}".format(global_step, cur_loss, new_time - last_time)
+    print "loss[{}]: {:.3f} dt {:.3f}".format(global_step, cur_loss, new_time - last_time)
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and opts.output_file is not None:
