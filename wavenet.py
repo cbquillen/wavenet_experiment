@@ -19,32 +19,32 @@ def resnet_block(x, num_outputs, rate, atrous_kernel_size,
     conv = causal_atrous_conv1d(x, num_outputs=num_outputs, rate=rate,
                                 kernel_size=atrous_kernel_size,
                                 activation_fn=tf.nn.tanh,
-                                scope=block_scope+'/conv')
+                                scope=block_scope + '/conv')
 
     gate = causal_atrous_conv1d(x, num_outputs=num_outputs, rate=rate,
                                 kernel_size=atrous_kernel_size,
                                 activation_fn=tf.nn.sigmoid,
-                                scope=block_scope+'/gate')
+                                scope=block_scope + '/gate')
 
     with tf.name_scope(block_scope + '/prod'):
         out = conv * gate
 
     out = layers.convolution(out, num_outputs=num_outputs, kernel_size=1,
                              activation_fn=tf.nn.tanh,
-                             scope=block_scope+'/output_xform')
+                             scope=block_scope + '/output_xform')
 
     with tf.name_scope(block_scope + '/residual'):
-                        residual = x + out
+        residual = x + out
 
     if skip_dimension != num_outputs:      # Upscale for more goodness.
         out = layers.convolution(out, num_outputs=skip_dimension,
                                  kernel_size=1, activation_fn=None,
-                                 scope=block_scope+'/skip_upscale')
+                                 scope=block_scope + '/skip_upscale')
 
     if histogram_summaries:
-        tf.summary.histogram(name=block_scope+'/conv', values=conv)
-        tf.summary.histogram(name=block_scope+'/gate', values=gate)
-        tf.summary.histogram(name=block_scope+'/out', values=out)
+        tf.summary.histogram(name=block_scope + '/conv', values=conv)
+        tf.summary.histogram(name=block_scope + '/gate', values=gate)
+        tf.summary.histogram(name=block_scope + '/out', values=out)
 
     return residual, out        # out gets added to the skip connections.
 
@@ -61,12 +61,12 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
         normalizer_params = {
             'normalizer_fn': layers.batch_norm,
             'normalizer_params': {
-                                    'is_training': is_training,
-                                    'reuse': reuse,
-                                    # Do updates in place. slower?
-                                    'updates_collections': None,
-                                 }
-             }
+                'is_training': is_training,
+                'reuse': reuse,
+                # Do updates in place. slower?
+                'updates_collections': None,
+            }
+        }
 
     # The arg_scope below will apply to all convolutions, including the ones
     # in resnet_block().
