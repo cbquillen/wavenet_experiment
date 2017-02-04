@@ -14,7 +14,7 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_encode, mu_law_decode
-from wavnet import wavenet_gen
+from wavenet import wavenet_gen
 
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
@@ -33,7 +33,7 @@ parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
 parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   action='store_true', default=False,
                   help='Do batch normalization')
-parser.add_option('-n', '--num_samples', default=32000, dest=num_samples,
+parser.add_option('-n', '--num_samples', default=32000, dest='num_samples',
                   type=int, help='Samples to generate')
 
 opts, cmdline_args = parser.parse_args()
@@ -43,14 +43,19 @@ opts, cmdline_args = parser.parse_args()
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is None:
-    print >> sys.stderr "You must provide a parameter file (-p)."
+    print >> sys.stderr, "You must provide a parameter file (-p)."
     exit(1)
 
 with open(opts.param_file) as f:
     exec(f)
 
+if opts.input_file is None:
+    print >> sys.stderr, "You must provide an input model (-i)."
+    exit(1)
+
 generate = wavenet_gen(opts)
 
+saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
 
 # Finalize the graph, so that any new ops cannot be created.
@@ -59,6 +64,11 @@ tf.get_default_graph().finalize()
 
 sess = tf.Session()
 sess.run(init)
+
+print "Restoring from", opts.input_file
+saver.restore(sess, opts.input_file)
+
 for sample in xrange(opts.num_samples):
-    sess.run(generate)
+    print sess.run(generate)
+
 sess.close()

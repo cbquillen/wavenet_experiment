@@ -46,37 +46,6 @@ def causal_atrous_conv1d(*args, **kwargs):
     return out
 
 
-@add_arg_scope
-def generate_conv1d(*args, **kwargs):
-    '''
-    For generation, we only need to generate one sample.
-    We are going to directly store it via tf.assign() in
-    the variable output of the next layer, so we don't
-    need to do any padding.  We'll also need padding=VALID
-    to be set in the convolution itself.
-    '''
-
-    kwargs['padding'] = 'VALID'  # Force it!
-
-    # Only three arguments are allowed un-named.  The first three:
-    if len(args) > 0:
-        kwargs['inputs'] = args[0]
-    if len(args) > 1:
-        kwargs['num_outputs'] = args[1]
-    if len(args) > 2:
-        kwargs['kernel_size'] = args[2]
-
-    rate = kwargs['rate']
-    with tf.name_scope(kwargs['scope']+'_end_slice'):
-        inputs = kwargs['inputs'][-kernel_size*rate:]
-        kwargs['inputs'] = inputs
-
-    out = layers.convolution(**kwargs)
-    assert out.get_shape()[1] == 1
-
-    return out
-
-
 def mu_law_encode(audio, quantization_channels):
     '''Quantizes waveform amplitudes.'''
     with tf.name_scope('encode'):
