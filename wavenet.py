@@ -1,11 +1,15 @@
 #!/usr/bin/env python
-# Wavenet model definition and generation using contrib.layers
-# - Carl Quillen
+'''
+Wavenet model definition and generation using contrib.layers
+ - Carl Quillen
+'''
+
+from __future__ import print_function
 
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
-from ops import causal_atrous_conv1d
-from tensorflow.contrib.framework import arg_scope, add_arg_scope
+from tensorflow.contrib.framework import arg_scope
+from ops import causal_atrous_conv1d, mu_law_decode
 
 
 def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
@@ -17,14 +21,14 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
     block_scope = scope + '/rate_' + str(rate)
 
     conv = convolution_func(x, num_outputs=num_outputs, rate=rate,
-                         kernel_size=kernel_size,
-                         activation_fn=tf.nn.tanh,
-                         scope=block_scope + '/conv')
+                            kernel_size=kernel_size,
+                            activation_fn=tf.nn.tanh,
+                            scope=block_scope + '/conv')
 
     gate = convolution_func(x, num_outputs=num_outputs, rate=rate,
-                         kernel_size=kernel_size,
-                         activation_fn=tf.nn.sigmoid,
-                         scope=block_scope + '/gate')
+                            kernel_size=kernel_size,
+                            activation_fn=tf.nn.sigmoid,
+                            scope=block_scope + '/gate')
 
     with tf.name_scope(block_scope + '/prod'):
         out = conv * gate
@@ -34,7 +38,9 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
                              scope=block_scope + '/output_xform')
 
     with tf.name_scope(block_scope + '/residual'):
-        residual = x + out
+        out_sz = out.get_shape()[1].value
+        out_sz = out_sz if out_sz is not None else tf.shape(out)[1]
+        residual = x[:, -out_sz:, :] + out
 
     if skip_dimension != num_outputs:      # Upscale for more goodness.
         out = layers.convolution(out, num_outputs=skip_dimension,
@@ -81,10 +87,10 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
         for i_block, block_dilations in enumerate(opts.dilations):
             for rate in block_dilations:
                 x, skip_connection = wavnet_block(
-                        x, opts.num_outputs, rate, opts.kernel_size,
-                        opts.skip_dimension, causal_atrous_conv1d,
-                        opts.histogram_summaries,
-                        scope='block_{}'.format(i_block))
+                    x, opts.num_outputs, rate, opts.kernel_size,
+                    opts.skip_dimension, causal_atrous_conv1d,
+                    opts.histogram_summaries,
+                    scope='block_{}'.format(i_block))
 
                 with tf.name_scope(
                         "block_{}/rate_{}_skip".format(i_block, rate)):
@@ -110,7 +116,8 @@ def shifted_var(name, shape, new_x):
     assert new_x.get_shape()[1] == 1
 
     with tf.variable_scope("shift_assign"):
-        x = tf.get_variable(name=name, shape=shape, trainable=False)
+        x = tf.get_variable(name=name, shape=shape, trainable=False,
+                            initializer=_initializer)
         y = tf.concat(1, [x[:, 1:, :], new_x])
         return tf.assign(x, y)
 
@@ -134,47 +141,48 @@ def wavenet_gen(opts):
     # in wavnet_block().
     with arg_scope([layers.convolution],
                    reuse=False, padding='VALID', **normalizer_params):
-        with tf.variable_scope('generate', dtype=tf.float32,
-                               initializer=_initializer, reuse=False):
-            inputs = tf.get_variable(
-                name="input", trainable=False,
-                shape=(1, opts.input_kernel_size, opts.num_outputs))
+        inputs = tf.get_variable(
+            initializer=_initializer,
+            name="input", trainable=False,
+            shape=(1, opts.input_kernel_size, 1))
 
-            last_x = layers.convolution(
-                inputs, num_outputs=opts.num_outputs,
-                kernel_size=opts.input_kernel_size, rate=1,
-                activation_fn=tf.nn.tanh, scope='input')
+        last_x = layers.convolution(
+            inputs, num_outputs=opts.num_outputs,
+            kernel_size=opts.input_kernel_size, rate=1,
+            activation_fn=tf.nn.tanh, scope='input')
 
-            skip_connections = 0
-            for i_block, block_dilations in enumerate(opts.dilations):
-                for rate in block_dilations:
-                    print "block {} rate {}".format(i_block, rate)
-                    x = shifted_var(name="x", new_x=last_x, shape=(
-                        1, rate*opts.kernel_size-1, opts.num_outputs))
+        skip_connections = 0
+        for i_block, block_dilations in enumerate(opts.dilations):
+            for rate in block_dilations:
+                x = shifted_var(
+                    name="x_{}_{}".format(i_block, rate),
+                    new_x=last_x, shape=(
+                        1, rate*(opts.kernel_size-1)+1, opts.num_outputs))
 
-                    last_x, skip_connection = wavnet_block(
-                            x, opts.num_outputs, rate, opts.kernel_size,
-                            opts.skip_dimension, layers.convolution,
-                            opts.histogram_summaries,
-                            scope='block_{}'.format(i_block))
+                last_x, skip_connection = wavnet_block(
+                    x, opts.num_outputs, rate, opts.kernel_size,
+                    opts.skip_dimension, layers.convolution,
+                    opts.histogram_summaries,
+                    scope='block_{}'.format(i_block))
 
-                with tf.name_scope(
-                        "block_{}/rate_{}_skip".format(i_block, rate)):
-                    skip_connections += skip_connection
+            with tf.name_scope(
+                    "block_{}/rate_{}_skip".format(i_block, rate)):
+                skip_connections += skip_connection
 
-        with arg_scope([layers.convolution], kernel_size=1):
-            with tf.variable_scope('output_layers'):
-                x = layers.convolution(
-                    skip_connections, num_outputs=opts.quantization_channels,
-                    activation_fn=tf.nn.tanh, scope='output_layer1')
+    with arg_scope([layers.convolution], kernel_size=1):
+        x = layers.convolution(
+            skip_connections, num_outputs=opts.quantization_channels,
+            activation_fn=tf.nn.tanh, scope='output_layer1')
 
-                x = layers.convolution(
-                    x, num_outputs=opts.quantization_channels,
-                    activation_fn=None, scope='output_layer2')
-                x = mu_law_decode(x, quantization_channels)
+        x = layers.convolution(
+            x, num_outputs=opts.quantization_channels,
+            activation_fn=None, scope='output_layer2')
+        with tf.variable_scope('output_postp'):
+            x = tf.arg_max(x, dimension=2)
+            x = tf.reshape(mu_law_decode(x, opts.quantization_channels),
+                           (1, 1, 1))
 
-                # Now shift the final output x2_0 into the inputs:
-                with name_scope("store_to_input"):
-                    x = tf.concat(1, [inputs[:, 1:, :] , x])
-                    tf.assign(inputs, x)
-            return x
+            # Now shift the final output x2_0 into the inputs:
+            inew = tf.concat(1, [inputs[:, 1:, :], x])
+            tf.assign(inputs, inew)
+    return x[0, 0, 0]

@@ -5,6 +5,9 @@ some machinery from ibab.
 
 Carl Quillen
 '''
+
+from __future__ import print_function
+
 import optparse
 import sys
 import time
@@ -121,13 +124,13 @@ init = tf.global_variables_initializer()
 # this is good for avoiding memory leaks.
 tf.get_default_graph().finalize()
 
-print "Model variables:"
+print("Model variables:")
 total_params = 0
 for var in tf.trainable_variables():
     vshape = var.get_shape().as_list()
     total_params += reduce(mul, vshape)
-    print "  ", var.name, vshape
-print "Total model parameters:", total_params
+    print("  ", var.name, vshape)
+print("Total model parameters:", total_params)
 sys.stdout.flush()
 
 if opts.logdir is not None:
@@ -138,7 +141,7 @@ if opts.logdir is not None:
 sess.run(init)
 
 if opts.input_file is not None:
-    print "Restoring from", opts.input_file
+    print("Restoring from", opts.input_file)
     saver.restore(sess, opts.input_file)
 
 # Main training loop:
@@ -158,8 +161,8 @@ for global_step in xrange(opts.max_steps):
                             feed_dict={learning_rate: cur_lr,
                             adams_epsilon: opts.epsilon})[0]
     new_time = time.time()
-    print "loss[{}]: {:.3f} dt {:.3f}".format(global_step, cur_loss,
-                                              new_time - last_time)
+    print("loss[{}]: {:.3f} dt {:.3f}".format(global_step, cur_loss,
+                                              new_time - last_time))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
@@ -167,6 +170,6 @@ for global_step in xrange(opts.max_steps):
         saver.save(sess, opts.output_file, global_step)
     sys.stdout.flush()
 
-print "Training done."
+print("Training done.")
 saver.save(sess, opts.output_file)
 sess.close()
