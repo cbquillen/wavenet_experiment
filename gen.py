@@ -80,5 +80,4 @@ for sample in xrange(opts.num_samples):
         print("{} samples generated.".format(sample + 1))
 sess.close()
 
-librosa.output.write_wav(opts.filename, opts.output_file,
-                         opts.sample_rate)
+librosa.output.write_wav(opts.output_file, output, opts.sample_rate)
