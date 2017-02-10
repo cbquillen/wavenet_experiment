@@ -12,12 +12,20 @@ from tensorflow.contrib.framework import arg_scope, add_arg_scope
 @add_arg_scope
 def causal_atrous_conv1d(*args, **kwargs):
     '''
-    Make convolution causal by shifting the output right
-    by the correct number of samples.  This happens in
-    two stages:
-        1) pad the input to the left by half the (kernel size-1).
-        2) extract the right part of the enlarged output.
+    Make convolution causal.  We do this in two stages:
+        1) pad the input to the left by ((kernel_size-1)*rate).
+        2) Do the convolution padding='VALID'.
+
+    This works because the minimum size that produces one output sample is
+    actually (kernel_size-1)*rate+1.  Padding by one less than that results
+    in the number of output samples staying the same as for the input. You
+    will probably have to work some examples to see that the result is causal.
+
+    We have a padding by 0 implementation, and a slower version that pads by
+    copies of the leftmost sample.
     '''
+    PAD0 = False   # if True Pad by 0 instead of doing a "SAME" pad.
+
     # Only three arguments are allowed un-named.  The first three:
     if len(args) > 0:
         kwargs['inputs'] = args[0]
@@ -30,7 +38,7 @@ def causal_atrous_conv1d(*args, **kwargs):
     # From experiment, 2-point convolutions are not causal. That means
     # that even-with stencils need to be treated like the next
     # larger odd filter.  This should be correct:
-    pad_amount = (kwargs['kernel_size']//2*rate)
+    pad_amount = ((kwargs['kernel_size']-1)*rate)
     inputs = kwargs['inputs']
 
     # The inputs are a three-dimensional tensor,
@@ -38,11 +46,14 @@ def causal_atrous_conv1d(*args, **kwargs):
     assert len(inputs.get_shape()) == 3  # rank 3!
 
     with tf.name_scope(kwargs['scope']+'_pad'):
-        inputs = tf.pad(inputs, [[0, 0], [pad_amount, 0], [0, 0]])
-    kwargs['inputs'] = inputs
+        if PAD0:
+            kwargs['inputs'] = tf.pad(
+                inputs, ([0, 0], [pad_amount, 0], [0, 0]))
+        else:
+            pad = tf.tile(inputs[:, 0:1, :], (1, pad_amount, 1))
+            kwargs['inputs'] = tf.concat(1, (pad, inputs))
+    kwargs['padding'] = 'VALID'
     out = layers.convolution(**kwargs)
-    with tf.name_scope(kwargs['scope']+'_slice'):
-        out = out[:, 0:-pad_amount, :]
     return out
 
 

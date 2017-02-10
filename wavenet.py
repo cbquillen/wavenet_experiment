@@ -77,7 +77,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavnet_block().
     with arg_scope([causal_atrous_conv1d, layers.convolution],
-                   reuse=reuse, padding='SAME', **normalizer_params):
+                   reuse=reuse, padding='VALID', **normalizer_params):
 
         x = causal_atrous_conv1d(inputs, num_outputs=opts.num_outputs,
                                  kernel_size=opts.input_kernel_size, rate=1,
