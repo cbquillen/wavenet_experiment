@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 '''
-This is a quick demo hack of a wavenet trainer, based on
-some machinery from ibab.
+This is a quick demo hack of a wavenet generator.
 
 Carl Quillen
 '''
@@ -18,7 +17,7 @@ import tensorflow.contrib.layers as layers
 import librosa
 from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_encode, mu_law_decode
-from wavenet import wavenet_gen
+from wavenet import wavenet
 
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
@@ -57,7 +56,17 @@ if opts.input_file is None:
     print("You must provide an input model (-i).", file=sys.stderr)
     exit(1)
 
-generate = wavenet_gen(opts)
+input_dim = opts.quantization_channels if opts.one_hot_input else 1
+prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)
+last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
+                             name='last_sample')
+
+with tf.name_scope("Generate"):
+    out = wavenet(last_sample, opts)
+    x = tf.arg_max(out, dimension=2)
+    gen_sample = tf.reshape(mu_law_decode(x, opts.quantization_channels), ())
+    if not opts.one_hot_input:
+        out = tf.reshape(gen_sample, (1, 1, 1))
 
 saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
@@ -76,7 +85,8 @@ saver.restore(sess, opts.input_file)
 output = np.zeros((opts.num_samples), dtype=np.float32)
 
 for sample in xrange(opts.num_samples):
-    output[sample] = sess.run(generate)
+    output[sample], prev_out = sess.run(
+        fetches=[gen_sample, out], feed_dict={last_sample: prev_out})
     if sample % 1000 == 999:
         print("{} samples generated.".format(sample + 1))
 sess.close()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
-This is a quick demo hack of a wavenet trainer, based on
-some machinery from ibab.
+This is a quick demo hack of a wavenet trainer, with some help
+of infrastructure from ibab.
 
 Carl Quillen
 '''
