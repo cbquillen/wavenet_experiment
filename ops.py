@@ -1,64 +1,9 @@
 from __future__ import division
 
-#
-# wavenet routines, some borrowed from ibab's wavenet implementation
-#
+# wavenet routines, borrowed from ibab's wavenet implementation
+# https://github.com/ibab/tensorflow-wavenet
 
 import tensorflow as tf
-import tensorflow.contrib.layers as layers
-from tensorflow.contrib.framework import arg_scope, add_arg_scope
-
-
-@add_arg_scope
-def causal_atrous_conv1d(*args, **kwargs):
-    '''
-    Make convolution causal.  We do this in two stages:
-        1) pad the input to the left by ((kernel_size-1)*rate).
-        2) Do the convolution padding='VALID'.
-
-    This works because the minimum size that produces one output sample is
-    actually (kernel_size-1)*rate+1.  Padding by one less than that results
-    in the number of output samples staying the same as for the input. You
-    will probably have to work some examples to see that the result is causal.
-
-    We have a padding by 0 implementation, and a slower version that pads by
-    copies of the leftmost sample.
-    '''
-    PAD0 = 'REFLECT'  # if 'SAME' copy 0 value, if 'CONSTANT', pad by zero.
-    # Note that if PAD0 != 'CONSTANT' training isn't 100% causal.
-    if 'PAD0' in kwargs:
-        PAD0 = kwargs['PAD0']
-        kwargs.pop('PAD0')
-
-    # Only three arguments are allowed un-named.  The first three:
-    if len(args) > 0:
-        kwargs['inputs'] = args[0]
-    if len(args) > 1:
-        kwargs['num_outputs'] = args[1]
-    if len(args) > 2:
-        kwargs['kernel_size'] = args[2]
-
-    rate = kwargs['rate']
-    # From experiment, 2-point convolutions are not causal. That means
-    # that even-with stencils need to be treated like the next
-    # larger odd filter.  This should be correct:
-    pad_amount = ((kwargs['kernel_size']-1)*rate)
-    inputs = kwargs['inputs']
-
-    # The inputs are a three-dimensional tensor,
-    # because of the channels and output dimensions.
-    assert len(inputs.get_shape()) == 3  # rank 3!
-
-    with tf.name_scope(kwargs['scope']+'_pad'):
-        if PAD0 == 'SAME':
-            pad = tf.tile(inputs[:, 0:1, :], (1, pad_amount, 1))
-            kwargs['inputs'] = tf.concat(1, (pad, inputs))
-        else:
-            kwargs['inputs'] = tf.pad(
-                inputs, ([0, 0], [pad_amount, 0], [0, 0]), PAD0)
-    kwargs['padding'] = 'VALID'
-    out = layers.convolution(**kwargs)
-    return out
 
 
 def mu_law_encode(audio, quantization_channels):
