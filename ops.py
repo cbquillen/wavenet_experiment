@@ -24,7 +24,11 @@ def causal_atrous_conv1d(*args, **kwargs):
     We have a padding by 0 implementation, and a slower version that pads by
     copies of the leftmost sample.
     '''
-    PAD0 = False   # if True Pad by 0 instead of doing a "SAME" pad.
+    PAD0 = 'REFLECT'  # if 'SAME' copy 0 value, if 'CONSTANT', pad by zero.
+    # Note that if PAD0 != 'CONSTANT' training isn't 100% causal.
+    if 'PAD0' in kwargs:
+        PAD0 = kwargs['PAD0']
+        kwargs.pop('PAD0')
 
     # Only three arguments are allowed un-named.  The first three:
     if len(args) > 0:
@@ -46,12 +50,12 @@ def causal_atrous_conv1d(*args, **kwargs):
     assert len(inputs.get_shape()) == 3  # rank 3!
 
     with tf.name_scope(kwargs['scope']+'_pad'):
-        if PAD0:
-            kwargs['inputs'] = tf.pad(
-                inputs, ([0, 0], [pad_amount, 0], [0, 0]))
-        else:
+        if PAD0 == 'SAME':
             pad = tf.tile(inputs[:, 0:1, :], (1, pad_amount, 1))
             kwargs['inputs'] = tf.concat(1, (pad, inputs))
+        else:
+            kwargs['inputs'] = tf.pad(
+                inputs, ([0, 0], [pad_amount, 0], [0, 0]), PAD0)
     kwargs['padding'] = 'VALID'
     out = layers.convolution(**kwargs)
     return out
