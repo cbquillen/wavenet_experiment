@@ -86,7 +86,7 @@ data = AudioReader(opts.data_dir, coord, sample_rate=opts.sample_rate,
 data.start_threads(sess)         # start data reader threads.
 
 # Define the computational graph.
-with tf.name_space("input_massaging"):
+with tf.name_scope("input_massaging"):
     batch = data.dequeue(num_elements=opts.batch_size)
 
     # We will try to predict the encoded_batch, which is a quantized version
