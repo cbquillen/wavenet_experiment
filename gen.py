@@ -66,7 +66,8 @@ init = tf.global_variables_initializer()
 # this is good for avoiding memory leaks.
 tf.get_default_graph().finalize()
 
-sess = tf.Session()
+# Run on cpu only.
+sess = tf.Session(config=tf.ConfigProto(device_count={'GPU': 0}))
 sess.run(init)
 
 print("Restoring from", opts.input_file)

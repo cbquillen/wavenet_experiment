@@ -69,6 +69,7 @@ opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
+opts.one_hot_input = False
 # This probably needs to be reduced at the end of training.
 
 # Set opts.* parameters from a parameter file if you want:
@@ -93,7 +94,8 @@ with tf.name_scope("input_massaging"):
     # of the input.
     encoded_batch = mu_law_encode(tf.reshape(batch, [opts.batch_size, -1]),
                                   opts.quantization_channels)
-    batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
+    if opts.one_hot_input:
+        batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
     # shift left to predict one sample into the future.
     encoded_batch = encoded_batch[:, 1:]

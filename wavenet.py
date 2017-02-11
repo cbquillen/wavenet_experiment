@@ -141,11 +141,10 @@ def wavenet_gen(opts):
     # in wavnet_block().
     with arg_scope([layers.convolution],
                    reuse=False, padding='VALID', **normalizer_params):
+        input_dim = opts.quantization_channels if opts.one_hot_input else 1
         inputs = tf.get_variable(
-            initializer=_initializer,
-            name="input", trainable=False,
-            shape=(opts.quantization_channels,
-                   opts.input_kernel_size, 1))
+            initializer=_initializer, name="input", trainable=False,
+            shape=(1, opts.input_kernel_size, input_dim))
 
         last_x = layers.convolution(
             inputs, num_outputs=opts.num_outputs,
@@ -180,10 +179,14 @@ def wavenet_gen(opts):
             activation_fn=None, scope='output_layer2')
         with tf.variable_scope('output_postp'):
             # Now shift the final output x2_0 into the inputs:
-            inew = tf.concat(1, [inputs[:, 1:, :], x])
-            tf.assign(inputs, inew)
-
-            x = tf.arg_max(x, dimension=2)
-            x = tf.reshape(mu_law_decode(x, opts.quantization_channels),
-                           (1, 1, 1))
-    return x[0, 0, 0]
+            if (opts.one_hot_input):
+                tf.assign(inputs, tf.concat(1, [inputs[:, 1:, :], x]))
+                x = tf.arg_max(x, dimension=2)
+                x = mu_law_decode(x, opts.quantization_channels)
+            else:
+                x = tf.arg_max(x, dimension=2)
+                x = tf.reshape(mu_law_decode(x, opts.quantization_channels),
+                    (1,1,1))
+                tf.assign(inputs, tf.concat(1, [inputs[:, 1:, :], x]))
+            x = tf.reshape(x, ())
+    return x
