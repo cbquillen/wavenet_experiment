@@ -86,15 +86,17 @@ data = AudioReader(opts.data_dir, coord, sample_rate=opts.sample_rate,
 data.start_threads(sess)         # start data reader threads.
 
 # Define the computational graph.
-batch = data.dequeue(num_elements=opts.batch_size)
+with tf.name_space("input_massaging"):
+    batch = data.dequeue(num_elements=opts.batch_size)
 
-# We will try to predict the encoded_batch, which is a quantized version
-# of the input.
-encoded_batch = mu_law_encode(tf.reshape(batch, [opts.batch_size, -1]),
-                              opts.quantization_channels)
+    # We will try to predict the encoded_batch, which is a quantized version
+    # of the input.
+    encoded_batch = mu_law_encode(tf.reshape(batch, [opts.batch_size, -1]),
+                                  opts.quantization_channels)
+    batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-# shift left to predict one sample into the future.
-encoded_batch = encoded_batch[:, 1:]
+    # shift left to predict one sample into the future.
+    encoded_batch = encoded_batch[:, 1:]
 
 wavenet_out = wavenet(batch, opts)
 

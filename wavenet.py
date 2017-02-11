@@ -144,7 +144,8 @@ def wavenet_gen(opts):
         inputs = tf.get_variable(
             initializer=_initializer,
             name="input", trainable=False,
-            shape=(1, opts.input_kernel_size, 1))
+            shape=(opts.quantization_channels,
+                   opts.input_kernel_size, 1))
 
         last_x = layers.convolution(
             inputs, num_outputs=opts.num_outputs,
@@ -178,11 +179,11 @@ def wavenet_gen(opts):
             x, num_outputs=opts.quantization_channels,
             activation_fn=None, scope='output_layer2')
         with tf.variable_scope('output_postp'):
-            x = tf.arg_max(x, dimension=2)
-            x = tf.reshape(mu_law_decode(x, opts.quantization_channels),
-                           (1, 1, 1))
-
             # Now shift the final output x2_0 into the inputs:
             inew = tf.concat(1, [inputs[:, 1:, :], x])
             tf.assign(inputs, inew)
+
+            x = tf.arg_max(x, dimension=2)
+            x = tf.reshape(mu_law_decode(x, opts.quantization_channels),
+                           (1, 1, 1))
     return x[0, 0, 0]
