@@ -120,7 +120,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
                     opts.skip_dimension, opts.histogram_summaries,
                     scope=block_rate)
 
-                with tf.name_scope(block_rate+"/skip".format(i_block, rate)):
+                with tf.name_scope(block_rate+"_skip".format(i_block, rate)):
                     skip_connections += skip_connection
 
     with arg_scope([layers.convolution], kernel_size=1):
