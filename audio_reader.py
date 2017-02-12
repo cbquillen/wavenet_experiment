@@ -170,7 +170,7 @@ class AudioReader(object):
 
                 # Cut samples into fixed size pieces
                 buffer_ = np.append(buffer_, audio)
-                while len(buffer_) > self.sample_size:
+                while len(buffer_) >= self.sample_size:
                     piece = np.reshape(buffer_[:self.sample_size], [-1, 1])
                     sess.run(self.enqueue,
                              feed_dict={self.sample_placeholder: piece})

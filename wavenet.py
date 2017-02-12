@@ -58,11 +58,6 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
     return residual, out        # out gets added to the skip connections.
 
 
-# A default variable initializer...
-def _initializer(shape, dtype, partition_info=None):
-    return tf.random_normal(shape, dtype=dtype)*0.1
-
-
 def padded(new_x, pad, scope, reuse=False):
     '''
     Pad new_x, and save the rightmost window for context for the next time
@@ -73,7 +68,8 @@ def padded(new_x, pad, scope, reuse=False):
 
     with tf.variable_scope(scope, reuse=reuse):
         x = tf.get_variable('pad', shape=(1, pad, new_x.get_shape()[2]),
-                            trainable=False, initializer=_initializer)
+                            trainable=False,
+                            initializer=tf.constant_initializer())
         y = tf.concat(1, (x, new_x))
         x = tf.assign(x, y[:, -pad:, :])
         with tf.get_default_graph().control_dependencies([x]):
@@ -91,7 +87,10 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
         normalizer_params = {
             'normalizer_fn': layers.batch_norm,
             'normalizer_params': {
-                'is_training': False
+                'is_training': is_training,
+                'reuse': reuse,
+                # Do updates in place. slower?
+                'updates_collections': None,
             }
         }
 

@@ -62,7 +62,7 @@ last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 
 with tf.name_scope("Generate"):
-    out = wavenet(last_sample, opts)
+    out = wavenet(last_sample, opts, is_training=False)
     x = tf.arg_max(out, dimension=2)
     gen_sample = tf.reshape(mu_law_decode(x, opts.quantization_channels), ())
     if not opts.one_hot_input:
@@ -91,4 +91,5 @@ for sample in xrange(opts.num_samples):
         print("{} samples generated.".format(sample + 1))
 sess.close()
 
+print("Writing to ", opts.output_file)
 librosa.output.write_wav(opts.output_file, output, opts.sample_rate)
