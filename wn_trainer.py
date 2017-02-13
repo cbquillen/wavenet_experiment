@@ -40,19 +40,22 @@ parser.add_option('-S', '--silence_threshold', dest='silence_threshold',
                   help='Silence classifier energy threshold')
 parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
                   type=int, default=100000, help='Audio chunk size per batch.')
-parser.add_option('-L', '--learning_rate', dest='learning_rate',
+parser.add_option('-L', '--base_learning_rate', dest='base_learning_rate',
                   type=float, default=1e-03,
-                  help='The learning rate factor. ' +
-                  'True learning rate is lr/(timestep/a+c)')
+                  help='The initial learning rate. ' +
+                  'lr = base_learning_rate/(lr_offet + timestep/const)')
 parser.add_option('-O', '--lr_offset', dest='lr_offset',
                   type=float, default=1.0,
-                  help="learning rate=1.0/(lr_offset + sample/const)")
+                  help="lr = base_learning_rate/(lr_offset + timestep/const)")
 parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
                   action='store_true', default=False,
                   help='Do histogram summaries')
 parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   action='store_true', default=False,
                   help='Do batch normalization')
+parser.add_option('-w', '--which_future', dest='which_future',
+                  type=int, default=1,
+                  help='Which sample in the future to predict')
 
 opts, cmdline_args = parser.parse_args()
 
@@ -70,6 +73,8 @@ opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
+
+assert opts.which_future > 0 and opts.which_future < 20
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -96,10 +101,18 @@ with tf.name_scope("input_massaging"):
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-    # shift left to predict one sample into the future.
-    encoded_batch = encoded_batch[:, 1:]
+    # shift left to predict two samples into the future.
+    encoded_batch = encoded_batch[:, opts.which_future:]
 
 wavenet_out = wavenet(batch, opts)
+for i in xrange(1, opts.which_future):
+    if opts.one_hot_input:
+        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
+    else:
+        wavenet_out = tf.reshape(tf.arg_max(wavenet_out, dimension=2),
+                                 shape=(-1, -1, 1))
+        wavenet_out = mu_law_decode(wavenet_out, opts.quantization_channels)
+        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables())
@@ -109,7 +122,7 @@ if opts.histogram_summaries:
     layers.summaries.summarize_variables()
 
 loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        wavenet_out[:, 0:-1], encoded_batch))
+        wavenet_out[:, 0:-opts.which_future], encoded_batch))
 
 tf.summary.scalar(name="loss", tensor=loss)
 
@@ -152,7 +165,7 @@ if opts.input_file is not None:
 last_time = time.time()
 
 for global_step in xrange(opts.max_steps):
-    cur_lr = opts.learning_rate/(
+    cur_lr = opts.base_learning_rate/(
         global_step/opts.CANONICAL_EPOCH_SIZE + opts.lr_offset)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:

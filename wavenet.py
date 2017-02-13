@@ -122,7 +122,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
                 with tf.name_scope(block_rate+"_skip".format(i_block, rate)):
                     skip_connections += skip_connection
 
-    with arg_scope([layers.convolution], kernel_size=1):
+    with arg_scope([layers.convolution], kernel_size=1, reuse=reuse):
         x = layers.convolution(
             skip_connections, num_outputs=opts.quantization_channels,
             activation_fn=tf.nn.tanh, scope='output_layer1')
