@@ -87,6 +87,7 @@ output = np.zeros((opts.num_samples), dtype=np.float32)
 for sample in xrange(opts.num_samples):
     output[sample], prev_out = sess.run(
         fetches=[gen_sample, out], feed_dict={last_sample: prev_out})
+    prev_out += (np.random.random()-0.5)*0.0003
     if sample % 1000 == 999:
         print("{} samples generated.".format(sample + 1))
 sess.close()

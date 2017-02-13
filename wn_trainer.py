@@ -63,14 +63,13 @@ opts.input_kernel_size = 32  # The size of the input layer kernel.
 opts.num_outputs = 64       # The number of convolutional channels.
 opts.skip_dimension = 512   # The dimension for skip connections.
 opts.kernel_size = 2
-opts.dilations = [[2, 4, 8, 16, 32, 128],
-                  [2, 4, 8, 16, 32, 128]]
+opts.dilations = [[2, 4, 8, 16, 32, 128, 256],
+                  [2, 4, 8, 16, 32, 128, 256]]
 opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
-# This probably needs to be reduced at the end of training.
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -115,6 +114,7 @@ loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
 tf.summary.scalar(name="loss", tensor=loss)
 
 learning_rate = tf.placeholder(tf.float32, shape=())
+# adams_epsilon probably should be reduced near the end of training.
 adams_epsilon = tf.placeholder(tf.float32, shape=())
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
                                    epsilon=adams_epsilon)
