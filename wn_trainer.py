@@ -19,7 +19,7 @@ from audio_reader import AudioReader
 from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet
 
-
+# Options from the command line:
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
@@ -59,15 +59,15 @@ parser.add_option('-w', '--which_future', dest='which_future',
 
 opts, cmdline_args = parser.parse_args()
 
-# Set these further options in a parameter file.
-opts.CANONICAL_EPOCH_SIZE = 20000.0
+# Options that can be set in a parameter file:
+opts.canonical_epoch_size = 20000.0
 opts.batch_size = 1         # How many utterances to train at once.
 opts.input_kernel_size = 32  # The size of the input layer kernel.
+opts.kernel_size = 2        # The size of other kernels.
 opts.num_outputs = 64       # The number of convolutional channels.
 opts.skip_dimension = 512   # The dimension for skip connections.
-opts.kernel_size = 2
-opts.dilations = [[2, 4, 8, 16, 32, 128, 256],
-                  [2, 4, 8, 16, 32, 128, 256]]
+opts.dilations = [[1, 2, 4, 8, 16, 32, 128, 256],
+                  [1, 2, 4, 8, 16, 32, 128, 256]]
 opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
@@ -101,7 +101,7 @@ with tf.name_scope("input_massaging"):
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-    # shift left to predict two samples into the future.
+    # shift left to predict which_future samples into the future.
     encoded_batch = encoded_batch[:, opts.which_future:]
 
 wavenet_out = wavenet(batch, opts)
@@ -166,7 +166,7 @@ last_time = time.time()
 
 for global_step in xrange(opts.max_steps):
     cur_lr = opts.base_learning_rate/(
-        global_step/opts.CANONICAL_EPOCH_SIZE + opts.lr_offset)
+        global_step/opts.canonical_epoch_size + opts.lr_offset)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
         cur_loss, summary_pb = sess.run([loss, summaries, minimize],
