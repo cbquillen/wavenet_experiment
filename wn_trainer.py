@@ -39,7 +39,7 @@ parser.add_option('-S', '--silence_threshold', dest='silence_threshold',
                   type=float, default=0.2,
                   help='Silence classifier energy threshold')
 parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
-                  type=int, default=100000, help='Audio chunk size per batch.')
+                  type=int, default=50000, help='Audio chunk size per batch.')
 parser.add_option('-L', '--base_learning_rate', dest='base_learning_rate',
                   type=float, default=1e-03,
                   help='The initial learning rate. ' +
@@ -66,8 +66,11 @@ opts.input_kernel_size = 32  # The size of the input layer kernel.
 opts.kernel_size = 2        # The size of other kernels.
 opts.num_outputs = 64       # The number of convolutional channels.
 opts.skip_dimension = 512   # The dimension for skip connections.
-opts.dilations = [[1, 2, 4, 8, 16, 32, 128, 256],
-                  [1, 2, 4, 8, 16, 32, 128, 256]]
+opts.dilations = [[1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512]]
 opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
@@ -82,6 +85,7 @@ if opts.param_file is not None:
 assert opts.which_future > 0 and opts.which_future < 20
 
 # smaller audio chunks increase the timesteps per epoch:
+# this is normalized relative to a 100000 sample chunk.
 opts.canonical_epoch_size *= 100000/opts.audio_chunk_size
 
 

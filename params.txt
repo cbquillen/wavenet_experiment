@@ -1,0 +1,18 @@
+opts.canonical_epoch_size = 20000.0
+opts.batch_size = 1         # How many utterances to train at once.
+opts.input_kernel_size = 32  # The size of the input layer kernel.
+opts.num_outputs = 64       # The number of convolutional channels.
+opts.skip_dimension = 512   # The dimension for skip connections.
+opts.kernel_size = 2
+opts.dilations = [[1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 128, 256, 512]]
+opts.epsilon = 1e-4      # Adams optimizer epsilon.
+opts.max_steps = 200000
+opts.sample_rate = 16000
+opts.audio_chunk_size = 50000
+opts.quantization_channels = 256
+opts.one_hot_input = False
+opts.batch_norm = False
