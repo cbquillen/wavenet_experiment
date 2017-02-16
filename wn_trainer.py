@@ -74,12 +74,16 @@ opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
 
-assert opts.which_future > 0 and opts.which_future < 20
-
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
     with open(opts.param_file) as f:
         exec(f)
+
+assert opts.which_future > 0 and opts.which_future < 20
+
+# smaller audio chunks increase the timesteps per epoch:
+opts.canonical_epoch_size *= 100000/opts.audio_chunk_size
+
 
 sess = tf.Session()
 
