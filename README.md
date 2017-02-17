@@ -17,11 +17,15 @@ anything reasonable in generation.
 
 To run this:
 
-./wn_trainer.py -l {logdir} -o {checkpoint-file}
+```sh
+$ ./wn_trainer.py -l {logdir} -o {checkpoint-file}
+```
 
 then after training a while:
 
-./wn_generate.py -i {checkpoint-file-#####} -n {n-samples} -o {out.wav}
+```sh
+$ ./wn_generate.py -i {checkpoint-file-#####} -n {n-samples} -o {out.wav}
+```
 
 The default parameters work for me on an 8Gb NVidia GTX-1070.  At the
 default parameter settings, it takes 0.9 seconds per time step with
@@ -37,14 +41,14 @@ batch-size for derivatives, but that might actually be a good thing.
 Many parameters must be changed using a parameter file.  Use "-p params.txt".
 I include an example file.  It is executable Python.
 
-# Advantages over the ibab setup
+### Advantages over the ibab setup
 
 - Simpler code. Generation is the same code as training.
 - Batch normalization is an option.
 - either one-hot or scalar input features, both in generation and training.
   - scalar input seems to produce better results
-- I get better accuracy, at least last time I compared.
-- You should be able to use n-with atrous convolutions in generation.
+- I get better accuracy and faster convergence, at least last time I compared.
+- You should be able to use N-point à trous convolutions in generation.
   (I haven't tested it.)
 - You can train predicting N samples into the future, not just one.
 
