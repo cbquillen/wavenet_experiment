@@ -68,8 +68,7 @@ def padded(new_x, pad, scope, reuse=False):
 
     with tf.variable_scope(scope, reuse=reuse):
         x = tf.get_variable('pad', shape=(1, pad, new_x.get_shape()[2]),
-                            trainable=False,
-                            initializer=tf.constant_initializer())
+                            trainable=False)
         y = tf.concat(1, (x, new_x))
         x = tf.assign(x, y[:, -pad:, :])
         with tf.get_default_graph().control_dependencies([x]):

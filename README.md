@@ -30,8 +30,8 @@ $ ./wn_generate.py -i {checkpoint-file-#####} -n {n-samples} -o {out.wav}
 The default parameters work for me on an 8Gb NVidia GTX-1070.  At the
 default parameter settings, it takes 0.9 seconds per time step with
 an audio chunk of 50000 samples (half of ibab's default.)  You will
-probably want to run 100000 steps, which will take at least a day unless
-you have a better GPU card.
+probably want to run a minimum of 100000 steps, which will take at least a
+day unless you have a better GPU card.
 
 If you have a card with smaller memory, you can run with a smaller
 audio chunk size.  I carry context correctly across chunks, so there
@@ -50,5 +50,5 @@ I include an example file.  It is executable Python.
 - I get better accuracy and faster convergence, at least last time I compared.
 - You should be able to use N-point à trous convolutions in generation.
   (I haven't tested it.)
-- You can train predicting N samples into the future, not just one.
+- You can train by predicting N samples into the future, not just one.
 
