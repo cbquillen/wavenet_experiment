@@ -41,10 +41,8 @@ parser.add_option('-n', '--num_samples', default=32000, dest='num_samples',
 
 opts, cmdline_args = parser.parse_args()
 
-# Further options *must( come from a parameter file.
+# Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
-
-# Set opts.* parameters from a parameter file if you want:
 if opts.param_file is None:
     print("You must provide a parameter file (-p).", file=sys.stderr)
     exit(1)
@@ -84,11 +82,15 @@ saver.restore(sess, opts.input_file)
 
 output = np.zeros((opts.num_samples), dtype=np.float32)
 
+last_time = time.time()
 for sample in xrange(opts.num_samples):
     output[sample], prev_out = sess.run(
         fetches=[gen_sample, out], feed_dict={last_sample: prev_out})
     if sample % 1000 == 999:
-        print("{} samples generated.".format(sample + 1))
+        new_time = time.time()
+        print("{} samples generated dt={:.02f}".format(sample + 1,
+                                                       new_time-last_time))
+        last_time = new_time
 sess.close()
 
 print("Writing to ", opts.output_file)

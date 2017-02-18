@@ -130,7 +130,7 @@ if opts.histogram_summaries:
     layers.summaries.summarize_variables()
 
 loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        wavenet_out[:, 0:-opts.which_future], encoded_batch))
+        logits=wavenet_out[:, 0:-opts.which_future], labels=encoded_batch))
 
 tf.summary.scalar(name="loss", tensor=loss)
 
