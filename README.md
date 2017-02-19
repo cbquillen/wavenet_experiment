@@ -60,5 +60,5 @@ I include an example file.  It is executable Python.
 
 There are of course some disadvantages too.
 
-Here is an output sample: [sample_output.wav](http://github.com/carl_quillen/wavenet_experiment/blob/master/sample_output.wav)
+Here is an output sample: [sample_output.wav](http://github.com/cbquillen/wavenet_experiment/blob/master/sample_output.wav)
 
