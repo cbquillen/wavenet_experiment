@@ -22,6 +22,8 @@ from wavenet import wavenet
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
+parser.add_option('-g', '--generation_noise', default=0.01,
+                  type=float, help='Noise to add in generation')
 parser.add_option('-l', '--logdir', dest='logdir',
                   default=None, help='Tensorflow event logdir')
 parser.add_option('-i', '--input_file', dest='input_file',
@@ -86,6 +88,8 @@ last_time = time.time()
 for sample in xrange(opts.num_samples):
     output[sample], prev_out = sess.run(
         fetches=[gen_sample, out], feed_dict={last_sample: prev_out})
+    prev_out += (np.random.random()-0.5)*opts.generation_noise
+    prev_out = np.clip(prev_out, -1.0, 1.0)
     if sample % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(sample + 1,
