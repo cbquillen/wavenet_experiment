@@ -26,23 +26,25 @@ $ ./wn_trainer.py -l {logdir} -o {checkpoint-file}
 then after training a while:
 
 ```sh
-$ ./wn_generate.py -i {checkpoint-file-#####} -n {n-samples} -o {out.wav}
+$ ./wn_generate.py -p {params file} -i {checkpoint-file-#####} -n {n-samples} -o {out.wav}
 ```
-
-The default parameters work for me on an 8Gb NVidia GTX-1070.  At the
-default parameter settings, it takes 0.9 seconds per minibatch with
-a minibatch audio chunk of 50000 samples (half of ibab's default.)  Generation
-is several hundred samples per second.  You will probably want to run a
-minimum of 100000 steps, which will take at least a day unless you have a
-better GPU card.
+The default parameters work for me on an 8Gb NVidia GTX-1070.  With these
+defaults, it takes ~0.9 seconds per minibatch in training when using an
+audio chunk of 50000 samples (half of ibab's default.)  Generation is
+several hundred samples per second.  You will probably want to train a
+minimum of 100000 steps, which will take at least a day unless you have
+a better GPU card.
 
 If you have a card with smaller memory, you can run with a smaller
 audio chunk size.  I carry context correctly across chunks, so there
 should be no impact on modeling accuracy.  It does change the effective
-batch-size for derivatives, but that might actually be a good thing.
+batch-size used for derivatives, so you may need to adjust the
+learning rate.
 
-Many parameters must be changed using a parameter file.  Use "-p params.txt".
-I include an example file.  It is executable Python.
+Many parameters must be changed using a parameter file.  Use "-p *params_file*".
+I include an example *params.txt* file.  It is executable Python.  You will
+need to suppy a parameter file for generation.  Generally you should
+use the same one that you used in training.
 
 ### Advantages over the ibab setup
 

@@ -86,8 +86,7 @@ assert opts.which_future > 0 and opts.which_future < 20
 
 # smaller audio chunks increase the timesteps per epoch:
 # this is normalized relative to a 100000 sample chunk.
-opts.canonical_epoch_size *= 100000/opts.audio_chunk_size
-
+opts.canonical_epoch_size *= 100000.0/opts.audio_chunk_size
 
 sess = tf.Session()
 
@@ -186,8 +185,8 @@ for global_step in xrange(opts.max_steps):
                             feed_dict={learning_rate: cur_lr,
                             adams_epsilon: opts.epsilon})[0]
     new_time = time.time()
-    print("loss[{}]: {:.3f} dt {:.3f}".format(global_step, cur_loss,
-                                              new_time - last_time))
+    print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(global_step, cur_loss,
+                                              new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
