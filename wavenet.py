@@ -68,6 +68,9 @@ def padded(new_x, pad, scope, reuse=False):
 
     with tf.variable_scope(scope, reuse=reuse):
         x = tf.get_variable('pad', shape=(1, pad, new_x.get_shape()[2]),
+                            collections=[tf.GraphKeys.GLOBAL_VARIABLES,
+                                         'padding'],
+                            initializer=tf.constant_initializer(),
                             trainable=False)
         y = tf.concat(values=(x, new_x), axis=1)
         x = tf.assign(x, y[:, -pad:, :])
@@ -130,3 +133,37 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
             x, num_outputs=opts.quantization_channels,
             activation_fn=None, scope='output_layer2')
     return x
+
+
+def reset_all_state():
+    '''
+    Reset all variables from padded() to zero.
+    '''
+    with tf.name_scope("reset_all_state"):
+        zero_list = []
+        for var in tf.get_collection('padding'):
+            zero_list.append(tf.assign_sub(var, var))
+
+        with tf.get_default_graph().control_dependencies(zero_list):
+            return tf.zeros(())
+
+
+def save_or_restore_state(reuse):
+    '''
+    Save or restore the state to/from variables save_state_name/varname
+    save if reuse == False, restore if reuse == True
+    '''
+    with tf.variable_scope("save_state"):
+        save_list = []
+        for var in tf.get_collection('padding'):
+            saved_var = tf.get_variable(
+                var.name, shape=var.get_shape(),
+                initializer=tf.constant_initializer(),
+                trainable=False, reuse=reuse)
+            if reuse:   # Restore if true.
+                save_list.append(tf.assign(var, save_var))
+            else:
+                save_list.append(tf.assign(save_var, var))
+
+        with tf.get_default_graph().control_dependencies(save_list):
+            return tf.zeros(())

@@ -17,7 +17,7 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from audio_reader import AudioReader
 from ops import mu_law_encode, mu_law_decode
-from wavenet import wavenet
+from wavenet import wavenet, reset_all_state, save_or_restore_state
 from confusion import update_confusion
 
 # Options from the command line:
@@ -78,6 +78,7 @@ opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
 opts.confusion_alpha = 0.001
+opts.reset_frequency = 0       # How often to reset state. (0 = disable)
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -110,36 +111,42 @@ with tf.name_scope("input_massaging"):
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-    # shift left to predict which_future samples into the future.
-    encoded_batch = encoded_batch[:, opts.which_future:]
-
 wavenet_out = wavenet(batch, opts)
-confusion = update_confusion(
-    opts, tf.reshape(tf.arg_max(wavenet_out[:, :-1, :], dimension=2), (-1,)),
-    tf.reshape(encoded_batch, (-1,)))
-tf.summary.image("confusion", tf.reshape(
-    confusion, (1, opts.quantization_channels, -1, 1)))
+confusion = update_confusion(wavenet_out[:, :-1], encoded_batch[:, 1:])
 
-for i in xrange(1, opts.which_future):
-    if opts.one_hot_input:
-        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
-    else:
-        wavenet_out = tf.reshape(tf.arg_max(wavenet_out, dimension=2),
-                                 shape=(-1, -1, 1))
-        wavenet_out = mu_law_decode(wavenet_out, opts.quantization_channels)
-        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
+with tf.get_default_graph.control_dependencies(wavenet_out):
+    save_state = save_or_restore_state(reuse=False)
+
+future_outs = [wavenet_out]
+with tf.get_default_graph.control_dependencies(save_state):
+    for i in xrange(1, opts.which_future):
+        future_out = wavenet_out
+        if opts.one_hot_input:
+            future_out = wavenet(future_out, opts, reuse=True)
+        else:
+            future_out = tf.reshape(tf.arg_max(future_out, dimension=2),
+                                    shape=(-1, -1, 1))
+            future_out = mu_law_decode(future_out, opts.quantization_channels)
+            future_out = wavenet(future_out, opts, reuse=True)
+        future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
-saver = tf.train.Saver(tf.trainable_variables())
+saver = tf.train.Saver(tf.trainable_variables() +
+                       tf.get_collections['confusion'])
 
 if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=wavenet_out[:, 0:-opts.which_future], labels=encoded_batch))
+loss = 0
+for i_future, future_out in enumerate(future_outs):
+    loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+        logits=future_out[:, 0:-i_future], labels=encoded_batch[:, i_future:]))
+loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)
+
+restore_state = save_or_restore_state(reuse=True)
 
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
@@ -149,6 +156,8 @@ optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
 minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
 
 summaries = tf.summary.merge_all()
+
+reset_all_state = reset_all_state()
 
 init = tf.global_variables_initializer()
 
@@ -192,6 +201,8 @@ for global_step in xrange(opts.max_steps):
         cur_loss = sess.run([loss, minimize, confusion],
                             feed_dict={learning_rate: cur_lr,
                             adams_epsilon: opts.epsilon})[0]
+    if opts.which_future > 1:
+        sess.run(restore_state)
     new_time = time.time()
     print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(
         global_step, cur_loss, new_time - last_time, cur_lr))
@@ -200,6 +211,10 @@ for global_step in xrange(opts.max_steps):
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
             opts.output_file is not None:
         saver.save(sess, opts.output_file, global_step)
+
+    if opts.reset_frequency > 0 and (global_step + 1) % \
+            opts.reset_frequency == 0:
+        sess.run(reset_all_state)
     sys.stdout.flush()
 
 print("Training done.")
