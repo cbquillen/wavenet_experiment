@@ -56,8 +56,9 @@ I include an example file.  It is executable Python.
 - You can train by predicting N samples into the future, not just one.
 - Last I checked, ibab's setup changes the audio chunk size with different
   batches.  Doing this slows things down dramatically.  Because I carry
-  context across chunks I can use constant chunk sizes and don't worry about
-  overlap.
+  context across chunks I can use constant chunk sizes without overlap.
 
 There are of course some disadvantages too.
+
+Here is an output sample: [sample_output.wav](http://github.com/cbquillen/wavenet_experiment/blob/master/sample_output.wav)
 
