@@ -37,7 +37,7 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
         out = conv * gate
 
     out = layers.conv2d(out, num_outputs=num_outputs, kernel_size=1,
-                        activation_fn=tf.nn.tanh,
+                        activation_fn=tf.nn.relu,
                         scope=scope + '/output_xform')
 
     with tf.name_scope(scope + '/residual'):
@@ -121,10 +121,13 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
                 with tf.name_scope(block_rate+"_skip".format(i_block, rate)):
                     skip_connections += skip_connection
 
+    with tf.name_scope('relu_skip'):
+        skip_connections = tf.nn.relu(skip_connections)
+
     with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse):
         x = layers.conv2d(
             skip_connections, num_outputs=opts.quantization_channels,
-            activation_fn=tf.nn.tanh, scope='output_layer1')
+            activation_fn=tf.nn.relu, scope='output_layer1')
 
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,

@@ -22,7 +22,7 @@ from wavenet import wavenet
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
-parser.add_option('-g', '--generation_noise', default=0.01,
+parser.add_option('-g', '--generation_noise', default=0.001,
                   type=float, help='Noise to add in generation')
 parser.add_option('-l', '--logdir', dest='logdir',
                   default=None, help='Tensorflow event logdir')
