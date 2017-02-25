@@ -18,6 +18,7 @@ import tensorflow.contrib.layers as layers
 from audio_reader import AudioReader
 from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet
+from confusion import update_confusion
 
 # Options from the command line:
 parser = optparse.OptionParser()
@@ -76,6 +77,7 @@ opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
+opts.confusion_alpha = 0.001
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -112,6 +114,12 @@ with tf.name_scope("input_massaging"):
     encoded_batch = encoded_batch[:, opts.which_future:]
 
 wavenet_out = wavenet(batch, opts)
+confusion = update_confusion(
+    opts, tf.reshape(tf.arg_max(wavenet_out[:, :-1, :], dimension=2), (-1,)),
+    tf.reshape(encoded_batch, (-1,)))
+tf.summary.image("confusion", tf.reshape(
+    confusion, (1, opts.quantization_channels, -1, 1)))
+
 for i in xrange(1, opts.which_future):
     if opts.one_hot_input:
         wavenet_out = wavenet(wavenet_out, opts, reuse=True)
@@ -176,17 +184,17 @@ for global_step in xrange(opts.max_steps):
         global_step/opts.canonical_epoch_size + opts.lr_offset)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
-        cur_loss, summary_pb = sess.run([loss, summaries, minimize],
+        cur_loss, summary_pb = sess.run([loss, summaries, minimize, confusion],
                                         feed_dict={learning_rate: cur_lr,
                                         adams_epsilon: opts.epsilon})[0:2]
         summary_writer.add_summary(summary_pb, global_step)
     else:
-        cur_loss = sess.run([loss, minimize],
+        cur_loss = sess.run([loss, minimize, confusion],
                             feed_dict={learning_rate: cur_lr,
                             adams_epsilon: opts.epsilon})[0]
     new_time = time.time()
-    print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(global_step, cur_loss,
-                                              new_time - last_time, cur_lr))
+    print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(
+        global_step, cur_loss, new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
