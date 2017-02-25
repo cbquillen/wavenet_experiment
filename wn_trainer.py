@@ -79,7 +79,6 @@ opts.quantization_channels = 256
 opts.one_hot_input = False
 opts.confusion_alpha = 0.001
 opts.reset_frequency = 0       # How often to reset state. (0 = disable)
-opts.confusion_alpha = 0.001
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -146,7 +145,8 @@ if opts.histogram_summaries:
 loss = 0
 for i_future, future_out in enumerate(future_outs):
     loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=future_out[:, 0:-(i_future+1), :], labels=encoded_batch[:, i_future+1:]))
+        logits=future_out[:, 0:-(i_future+1), :],
+        labels=encoded_batch[:, i_future+1:]))
 loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)
@@ -198,16 +198,9 @@ for global_step in xrange(opts.max_steps):
         global_step/opts.canonical_epoch_size + opts.lr_offset)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
-<<<<<<< 016e1b610359efe33a787753e1a44e3040d8ca46
         cur_loss, summary_pb = sess.run([loss, summaries, minimize, confusion],
                                         feed_dict={learning_rate: cur_lr,
                                         adams_epsilon: opts.epsilon})[0:2]
-=======
-        cur_loss, summary_pb = sess.run(
-            [loss, summaries, minimize, confusion],
-            feed_dict={learning_rate: cur_lr, adams_epsilon: opts.epsilon}
-            )[0:2]
->>>>>>> Confusion matrix + which_future update.
         summary_writer.add_summary(summary_pb, global_step)
     else:
         cur_loss = sess.run([loss, minimize, confusion],
