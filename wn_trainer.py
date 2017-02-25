@@ -114,11 +114,13 @@ with tf.name_scope("input_massaging"):
     encoded_batch = encoded_batch[:, opts.which_future:]
 
 wavenet_out = wavenet(batch, opts)
-dim = opts.quantization_channels
-confusion = update_confusion(
-    opts, tf.reshape(tf.nn.softmax(wavenet_out[:, :-1, :]), (-1, dim)),
-    tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
-tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
+
+with tf.name_scope('confusion_matrix'):
+    dim = opts.quantization_channels
+    confusion = update_confusion(
+        opts, tf.reshape(tf.nn.softmax(wavenet_out[:, :-1, :]), (-1, dim)),
+        tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
+    tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
 
 for i in xrange(1, opts.which_future):
     if opts.one_hot_input:

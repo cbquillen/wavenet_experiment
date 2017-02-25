@@ -64,11 +64,12 @@ with tf.name_scope("Generate"):
     # Pick a sample from the output distribution:
     pick = tf.cumsum(out, axis=2)
     select = tf.random_uniform(shape=())
-    x = tf.reduce_sum(tf.cast(pick < select, tf.int16), axis=2)
+    x = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
     gen_sample = tf.reshape(mu_law_decode(x, opts.quantization_channels), ())
-    if not opts.one_hot_input:
+    if opts.one_hot_input:
+        out = tf.one_hot(x, depth=opts.quantization_channels)
+    else:
         out = tf.reshape(gen_sample, (1, 1, 1))
-    # For 1-hot input, we might want to: out = tf.one_hot(x)
 
 saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
