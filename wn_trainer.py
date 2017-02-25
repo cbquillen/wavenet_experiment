@@ -79,6 +79,7 @@ opts.quantization_channels = 256
 opts.one_hot_input = False
 opts.confusion_alpha = 0.001
 opts.reset_frequency = 0       # How often to reset state. (0 = disable)
+opts.confusion_alpha = 0.001
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -106,21 +107,25 @@ with tf.name_scope("input_massaging"):
 
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.
-    encoded_batch = mu_law_encode(tf.reshape(batch, [opts.batch_size, -1]),
+    encoded_batch = mu_law_encode(tf.reshape(batch, (opts.batch_size, -1)),
                                   opts.quantization_channels)
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
 wavenet_out = wavenet(batch, opts)
-confusion = update_confusion(wavenet_out[:, :-1], encoded_batch[:, 1:])
+confusion = update_confusion(
+    opts, tf.reshape(tf.arg_max(wavenet_out[:, :-1, :], dimension=2), (-1,)),
+    tf.reshape(encoded_batch[:, 1:], (-1,)))
+tf.summary.image("confusion", tf.reshape(
+    confusion, (1, opts.quantization_channels, -1, 1)))
 
-with tf.get_default_graph.control_dependencies(wavenet_out):
+with tf.get_default_graph().control_dependencies([wavenet_out]):
     save_state = save_or_restore_state(reuse=False)
 
 future_outs = [wavenet_out]
-with tf.get_default_graph.control_dependencies(save_state):
+with tf.get_default_graph().control_dependencies([save_state]):
+    future_out = wavenet_out
     for i in xrange(1, opts.which_future):
-        future_out = wavenet_out
         if opts.one_hot_input:
             future_out = wavenet(future_out, opts, reuse=True)
         else:
@@ -132,7 +137,7 @@ with tf.get_default_graph.control_dependencies(save_state):
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables() +
-                       tf.get_collections['confusion'])
+                       tf.get_collection('confusion'))
 
 if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
@@ -141,7 +146,7 @@ if opts.histogram_summaries:
 loss = 0
 for i_future, future_out in enumerate(future_outs):
     loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=future_out[:, 0:-i_future], labels=encoded_batch[:, i_future:]))
+        logits=future_out[:, 0:-(i_future+1), :], labels=encoded_batch[:, i_future+1:]))
 loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)
@@ -193,9 +198,16 @@ for global_step in xrange(opts.max_steps):
         global_step/opts.canonical_epoch_size + opts.lr_offset)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
+<<<<<<< 016e1b610359efe33a787753e1a44e3040d8ca46
         cur_loss, summary_pb = sess.run([loss, summaries, minimize, confusion],
                                         feed_dict={learning_rate: cur_lr,
                                         adams_epsilon: opts.epsilon})[0:2]
+=======
+        cur_loss, summary_pb = sess.run(
+            [loss, summaries, minimize, confusion],
+            feed_dict={learning_rate: cur_lr, adams_epsilon: opts.epsilon}
+            )[0:2]
+>>>>>>> Confusion matrix + which_future update.
         summary_writer.add_summary(summary_pb, global_step)
     else:
         cur_loss = sess.run([loss, minimize, confusion],

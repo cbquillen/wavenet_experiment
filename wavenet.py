@@ -153,17 +153,16 @@ def save_or_restore_state(reuse):
     Save or restore the state to/from variables save_state_name/varname
     save if reuse == False, restore if reuse == True
     '''
-    with tf.variable_scope("save_state"):
+    with tf.variable_scope("save_state", reuse=reuse):
         save_list = []
         for var in tf.get_collection('padding'):
             saved_var = tf.get_variable(
-                var.name, shape=var.get_shape(),
-                initializer=tf.constant_initializer(),
-                trainable=False, reuse=reuse)
+                var.name.rsplit(':')[0], shape=var.get_shape(),
+                initializer=tf.constant_initializer(), trainable=False)
             if reuse:   # Restore if true.
-                save_list.append(tf.assign(var, save_var))
+                save_list.append(tf.assign(var, saved_var))
             else:
-                save_list.append(tf.assign(save_var, var))
+                save_list.append(tf.assign(saved_var, var))
 
         with tf.get_default_graph().control_dependencies(save_list):
             return tf.zeros(())
