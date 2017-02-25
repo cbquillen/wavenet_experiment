@@ -14,7 +14,7 @@ def update_confusion(opts, prediction, reference, reuse=False):
             trainable=False)
 
         confusion_delta = tf.matmul(prediction, reference, transpose_a=True)
-                                              
+
         confusion = tf.assign(
             confusion,
             opts.confusion_alpha*tf.cast(confusion_delta, tf.float32) +

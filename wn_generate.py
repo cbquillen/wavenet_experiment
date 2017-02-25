@@ -22,8 +22,6 @@ from wavenet import wavenet
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
-parser.add_option('-g', '--generation_noise', default=0.01,
-                  type=float, help='Noise to add in generation')
 parser.add_option('-l', '--logdir', dest='logdir',
                   default=None, help='Tensorflow event logdir')
 parser.add_option('-i', '--input_file', dest='input_file',
@@ -62,11 +60,15 @@ last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 
 with tf.name_scope("Generate"):
-    out = wavenet(last_sample, opts, is_training=False)
-    x = tf.arg_max(out, dimension=2)
+    out = tf.nn.softmax(wavenet(last_sample, opts, is_training=False))
+    # Pick a sample from the output distribution:
+    pick = tf.cumsum(out, axis=2)
+    select = tf.random_uniform(shape=())
+    x = tf.reduce_sum(tf.cast(pick < select, tf.int16), axis=2)
     gen_sample = tf.reshape(mu_law_decode(x, opts.quantization_channels), ())
     if not opts.one_hot_input:
         out = tf.reshape(gen_sample, (1, 1, 1))
+    # For 1-hot input, we might want to: out = tf.one_hot(x)
 
 saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
@@ -88,8 +90,6 @@ last_time = time.time()
 for sample in xrange(opts.num_samples):
     output[sample], prev_out = sess.run(
         fetches=[gen_sample, out], feed_dict={last_sample: prev_out})
-    prev_out += (np.random.random()-0.5)*opts.generation_noise
-    prev_out = np.clip(prev_out, -1.0, 1.0)
     if sample % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(sample + 1,
