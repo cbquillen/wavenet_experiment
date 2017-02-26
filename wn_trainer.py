@@ -54,9 +54,6 @@ parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
 parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   action='store_true', default=False,
                   help='Do batch normalization')
-parser.add_option('-w', '--which_future', dest='which_future',
-                  type=int, default=1,
-                  help='Which sample in the future to predict')
 
 opts, cmdline_args = parser.parse_args()
 
@@ -77,14 +74,12 @@ opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
-opts.confusion_alpha = 0.001
+opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
     with open(opts.param_file) as f:
         exec(f)
-
-assert opts.which_future > 0 and opts.which_future < 20
 
 # smaller audio chunks increase the timesteps per epoch:
 # this is normalized relative to a 100000 sample chunk.
@@ -110,26 +105,18 @@ with tf.name_scope("input_massaging"):
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-    # shift left to predict which_future samples into the future.
-    encoded_batch = encoded_batch[:, opts.which_future:]
+    # shift left to predict one sample into the future.
+    encoded_batch = encoded_batch[:, 1:]
 
 wavenet_out = wavenet(batch, opts)
 
-with tf.name_scope('confusion_matrix'):
-    dim = opts.quantization_channels
-    confusion = update_confusion(
-        opts, tf.reshape(tf.nn.softmax(wavenet_out[:, :-1, :]), (-1, dim)),
-        tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
-    tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
-
-for i in xrange(1, opts.which_future):
-    if opts.one_hot_input:
-        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
-    else:
-        wavenet_out = tf.reshape(tf.arg_max(wavenet_out, dimension=2),
-                                 shape=(-1, -1, 1))
-        wavenet_out = mu_law_decode(wavenet_out, opts.quantization_channels)
-        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
+if opts.confusion_alpha > 0:
+    with tf.name_scope('confusion_matrix'):
+        dim = opts.quantization_channels
+        confusion = update_confusion(
+            opts, tf.reshape(tf.nn.softmax(wavenet_out[:, :-1, :]), (-1, dim)),
+            tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
+        tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables())
@@ -139,7 +126,7 @@ if opts.histogram_summaries:
     layers.summaries.summarize_variables()
 
 loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=wavenet_out[:, 0:-opts.which_future], labels=encoded_batch))
+        logits=wavenet_out[:, 0:-1], labels=encoded_batch))
 
 tf.summary.scalar(name="loss", tensor=loss)
 
@@ -186,12 +173,12 @@ for global_step in xrange(opts.max_steps):
         global_step/opts.canonical_epoch_size + opts.lr_offset)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
-        cur_loss, summary_pb = sess.run([loss, summaries, minimize, confusion],
+        cur_loss, summary_pb = sess.run([loss, summaries, minimize],
                                         feed_dict={learning_rate: cur_lr,
                                         adams_epsilon: opts.epsilon})[0:2]
         summary_writer.add_summary(summary_pb, global_step)
     else:
-        cur_loss = sess.run([loss, minimize, confusion],
+        cur_loss = sess.run([loss, minimize],
                             feed_dict={learning_rate: cur_lr,
                             adams_epsilon: opts.epsilon})[0]
     new_time = time.time()

@@ -55,7 +55,6 @@ use the same one that you used in training.
 - I get better accuracy and faster convergence, at least last time I compared.
 - You should be able to use N-point à trous convolutions in generation.
   (I haven't tested it.)
-- You can train by predicting N samples into the future, not just one.
 - Last I checked, ibab's setup changes the audio chunk size with different
   batches.  Doing this slows things down dramatically.  Because I carry
   context across chunks I can use constant chunk sizes without overlap.
