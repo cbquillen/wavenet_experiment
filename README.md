@@ -28,12 +28,12 @@ then after training a while:
 ```sh
 $ ./wn_generate.py -p {params file} -i {checkpoint-file-#####} -n {n-samples} -o {out.wav}
 ```
-The default parameters work for me on an 8Gb NVidia GTX-1070.  With these
-defaults, it takes ~0.9 seconds per minibatch in training when using an
-audio chunk of 50000 samples (half of ibab's default.)  Generation is
-several hundred samples per second.  You will probably want to train a
-minimum of 100000 steps, which will take at least a day unless you have
-a better GPU card.
+The default parameters work for me on an 8Gb NVidia GTX-1070.
+With these defaults, it takes ~1.0 seconds per minibatch in training
+when using an audio chunk of 50000 samples (half of ibab's default.)
+CPU-only generation runs at about 150 samples per second on my
+Core i-5 6600K.  You will probably want to train a minimum of 100000
+steps, which will take at least a day unless you have a better GPU card.
 
 If you have a card with smaller memory, you can run with a smaller
 audio chunk size.  I carry context correctly across chunks, so there
@@ -53,8 +53,7 @@ use the same one that you used in training.
 - either one-hot or scalar input features, both in generation and training.
   - scalar input seems to produce better results
 - I get better accuracy and faster convergence, at least last time I compared.
-- You should be able to use N-point à trous convolutions in generation.
-  (I haven't tested it.)
+- You can use N-point à trous convolutions in generation.
 - Last I checked, ibab's setup changes the audio chunk size with different
   batches.  Doing this slows things down dramatically.  Because I carry
   context across chunks I can use constant chunk sizes without overlap.
