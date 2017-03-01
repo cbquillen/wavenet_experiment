@@ -128,5 +128,6 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
 
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,
+            normalizer_params=None,
             activation_fn=None, scope='output_layer2')
     return x
