@@ -52,6 +52,7 @@ use the same one that you used in training.
 - Batch normalization is an option.
 - either one-hot or scalar input features, both in generation and training.
   - scalar input seems to produce better results
+- You can train looking more than one sample into the future.
 - I get better accuracy and faster convergence, at least last time I compared.
 - You can use N-point à trous convolutions in generation.
 - Last I checked, ibab's setup changes the audio chunk size with different
