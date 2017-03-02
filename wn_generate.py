@@ -22,8 +22,6 @@ from wavenet import wavenet
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
-parser.add_option('-g', '--generation_noise', default=0.01,
-                  type=float, help='Noise to add in generation')
 parser.add_option('-l', '--logdir', dest='logdir',
                   default=None, help='Tensorflow event logdir')
 parser.add_option('-i', '--input_file', dest='input_file',
@@ -62,10 +60,20 @@ last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 
 with tf.name_scope("Generate"):
-    out = wavenet(last_sample, opts, is_training=False)
-    x = tf.arg_max(out, dimension=2)
-    gen_sample = tf.reshape(mu_law_decode(x, opts.quantization_channels), ())
-    if not opts.one_hot_input:
+    out = tf.nn.softmax(wavenet(last_sample, opts, is_training=False))
+
+    max_likeli_sample = tf.reshape(
+        mu_law_decode(tf.argmax(out, axis=2), opts.quantization_channels), ())
+
+    # Sample from the output distribution to feed back into the input:
+    pick = tf.cumsum(out, axis=2)
+    select = tf.random_uniform(shape=())
+    x = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
+    if opts.one_hot_input:
+        out = tf.one_hot(x, depth=opts.quantization_channels)
+    else:
+        gen_sample = tf.reshape(
+            mu_law_decode(x, opts.quantization_channels), ())
         out = tf.reshape(gen_sample, (1, 1, 1))
 
 saver = tf.train.Saver(tf.trainable_variables())
@@ -87,9 +95,7 @@ output = np.zeros((opts.num_samples), dtype=np.float32)
 last_time = time.time()
 for sample in xrange(opts.num_samples):
     output[sample], prev_out = sess.run(
-        fetches=[gen_sample, out], feed_dict={last_sample: prev_out})
-    prev_out += (np.random.random()-0.5)*opts.generation_noise
-    prev_out = np.clip(prev_out, -1.0, 1.0)
+        fetches=[max_likeli_sample, out], feed_dict={last_sample: prev_out})
     if sample % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(sample + 1,

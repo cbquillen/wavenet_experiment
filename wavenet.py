@@ -78,9 +78,13 @@ def padded(new_x, pad, scope, reuse=False):
             return tf.identity(y)
 
 
-def wavenet(inputs, opts, is_training=True, reuse=False):
+def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
+            extra_pad_scope=''):
     '''
-    The wavenet model definition for training/generation.
+    The wavenet model definition for training/generation.  Note that if we
+    use wavenets recursively, we will want separate padding variables for
+    each "layer".  So we have a separate reuse flag for padding() and
+    an additional thing to add to the scope for padding() in that case.
     '''
 
     # Parameters for batch normalization
@@ -101,8 +105,9 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
     with arg_scope([layers.conv2d],
                    reuse=reuse, padding='VALID', **normalizer_params):
 
-        inputs = padded(new_x=inputs, reuse=reuse,
-                        pad=opts.input_kernel_size-1, scope='input_layer/pad')
+        inputs = padded(new_x=inputs, reuse=pad_reuse,
+                        pad=opts.input_kernel_size-1,
+                        scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(
             inputs, num_outputs=opts.num_outputs,
             kernel_size=opts.input_kernel_size, rate=1,
@@ -113,8 +118,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
                 x = padded(
-                    new_x=x, pad=rate*(opts.kernel_size-1), reuse=reuse,
-                    scope=block_rate+"/pad")
+                    new_x=x, pad=rate*(opts.kernel_size-1), reuse=pad_reuse,
+                    scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavnet_block(
                     x, opts.num_outputs, rate, opts.kernel_size,
@@ -131,38 +136,6 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
 
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,
+            normalizer_params=None,
             activation_fn=None, scope='output_layer2')
     return x
-
-
-def reset_all_state():
-    '''
-    Reset all variables from padded() to zero.
-    '''
-    with tf.name_scope("reset_all_state"):
-        zero_list = []
-        for var in tf.get_collection('padding'):
-            zero_list.append(tf.assign_sub(var, var))
-
-        with tf.get_default_graph().control_dependencies(zero_list):
-            return tf.zeros(())
-
-
-def save_or_restore_state(reuse):
-    '''
-    Save or restore the state to/from variables save_state_name/varname
-    save if reuse == False, restore if reuse == True
-    '''
-    with tf.variable_scope("save_state", reuse=reuse):
-        save_list = []
-        for var in tf.get_collection('padding'):
-            saved_var = tf.get_variable(
-                var.name.rsplit(':')[0], shape=var.get_shape(),
-                initializer=tf.constant_initializer(), trainable=False)
-            if reuse:   # Restore if true.
-                save_list.append(tf.assign(var, saved_var))
-            else:
-                save_list.append(tf.assign(saved_var, var))
-
-        with tf.get_default_graph().control_dependencies(save_list):
-            return tf.zeros(())
