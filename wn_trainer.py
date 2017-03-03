@@ -44,10 +44,9 @@ parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
 parser.add_option('-L', '--base_learning_rate', dest='base_learning_rate',
                   type=float, default=1e-03,
                   help='The initial learning rate. ' +
-                  'lr = base_learning_rate/(lr_offet + timestep/const)')
-parser.add_option('-O', '--lr_offset', dest='lr_offset',
-                  type=float, default=1.0,
-                  help="lr = base_learning_rate/(lr_offset + timestep/const)")
+                  'lr = base_learning_rate/(1.0+lr_offet+timestep)*const)')
+parser.add_option('-O', '--lr_offset', dest='lr_offset', type=int, default=0,
+                  help="lr=base_learning_rate/(1.0+timestep+lr_offset)*const)")
 parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
                   action='store_true', default=False,
                   help='Do histogram summaries')
@@ -73,7 +72,6 @@ opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
-opts.one_hot_input = False
 opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
 
 # Set opts.* parameters from a parameter file if you want:
@@ -98,35 +96,22 @@ data.start_threads(sess)         # start data reader threads.
 with tf.name_scope("input_massaging"):
     batch = data.dequeue(num_elements=opts.batch_size)
 
-    # We will try to predict the encoded_batch, which is a quantized version
-    # of the input.
-    encoded_batch = mu_law_encode(tf.reshape(batch, (opts.batch_size, -1)),
-                                  opts.quantization_channels)
-    if opts.one_hot_input:
-        batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
+    # We will try to predict a quantization of the difference to the next
+    # sample of the input.
+    difference = (batch[:, 1:] - batch[:, :-1])        # -2 to 2 theoretically.
+    quantized_diff = mu_law_encode(
+        tf.reshape(difference*0.5, (opts.batch_size, -1)),
+        opts.quantization_channels)
 
-wavenet_out = wavenet(batch, opts)
+out = wavenet(batch, opts)
 
 if opts.confusion_alpha > 0:
     with tf.name_scope('confusion_matrix'):
         dim = opts.quantization_channels
         confusion = update_confusion(
             opts, tf.reshape(tf.nn.softmax(wavenet_out[:, :-1, :]), (-1, dim)),
-            tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
+            tf.reshape(tf.one_hot(quantized_diff, dim), (-1, dim)))
         tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
-
-future_outs = [wavenet_out]
-future_out = wavenet_out
-for i in xrange(1, opts.which_future):
-    with tf.name_scope('future_'+str(i)):
-        if not opts.one_hot_input:
-            # Should really sample instead of arg_max...
-            future_out = tf.reshape(tf.arg_max(future_out, dimension=2),
-                                    shape=(opts.batch_size, -1, 1))
-            future_out = mu_law_decode(future_out, opts.quantization_channels)
-    future_out = wavenet(future_out, opts, reuse=True, pad_reuse=False,
-                         extra_pad_scope=str(i))
-    future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables())
@@ -135,21 +120,24 @@ if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-loss = 0
-for i_future, future_out in enumerate(future_outs):
-    loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=future_out[:, 0:-(i_future+1), :],
-        labels=encoded_batch[:, i_future+1:]))
-loss /= opts.which_future
+loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+        logits=out[:, :-1], labels=quantized_diff))
 
 tf.summary.scalar(name="loss", tensor=loss)
 
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
 adams_epsilon = tf.placeholder(tf.float32, shape=())
-optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
-                                   epsilon=adams_epsilon)
-minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+
+# We might want to run just measuring loss and not training,
+# perhaps to see what the loss variance is on the training.
+# in that case, set opts.base_learning_rate=0
+if opts.base_learning_rate > 0:
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
+                                       epsilon=adams_epsilon)
+    minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+else:
+    minimize = tf.constant(0)   # a noop.
 
 summaries = tf.summary.merge_all()
 
@@ -182,9 +170,9 @@ if opts.input_file is not None:
 # Main training loop:
 last_time = time.time()
 
-for global_step in xrange(opts.max_steps):
+for global_step in xrange(opts.lr_offset, opts.max_steps):
     cur_lr = opts.base_learning_rate/(
-        global_step/opts.canonical_epoch_size + opts.lr_offset)
+        1.0 + global_step/opts.canonical_epoch_size)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
         cur_loss, summary_pb = sess.run([loss, summaries, minimize],

@@ -54,9 +54,8 @@ if opts.input_file is None:
     print("You must provide an input model (-i).", file=sys.stderr)
     exit(1)
 
-input_dim = opts.quantization_channels if opts.one_hot_input else 1
-prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)
-last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
+prev_out = np.zeros((1, 1, 1), dtype=np.float32)
+last_sample = tf.placeholder(tf.float32, shape=(1, 1, 1),
                              name='last_sample')
 
 with tf.name_scope("Generate"):
@@ -64,17 +63,15 @@ with tf.name_scope("Generate"):
 
     max_likeli_sample = tf.reshape(
         mu_law_decode(tf.argmax(out, axis=2), opts.quantization_channels), ())
+    max_likeli_sample = 2.0*max_likeli_sample + last_sample
 
     # Sample from the output distribution to feed back into the input:
     pick = tf.cumsum(out, axis=2)
     select = tf.random_uniform(shape=())
     x = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
-    if opts.one_hot_input:
-        out = tf.one_hot(x, depth=opts.quantization_channels)
-    else:
-        gen_sample = tf.reshape(
-            mu_law_decode(x, opts.quantization_channels), ())
-        out = tf.reshape(gen_sample, (1, 1, 1))
+    out = tf.reshape(
+        2.0*mu_law_decode(x, opts.quantization_channels), ()) + last_sample
+    out = tf.reshape(tf.clip_by_value(out, -1.0, 1.0), (1, 1, 1))
 
 saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
