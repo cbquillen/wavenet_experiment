@@ -44,10 +44,9 @@ parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
 parser.add_option('-L', '--base_learning_rate', dest='base_learning_rate',
                   type=float, default=1e-03,
                   help='The initial learning rate. ' +
-                  'lr = base_learning_rate/(lr_offet + timestep/const)')
-parser.add_option('-O', '--lr_offset', dest='lr_offset',
-                  type=float, default=1.0,
-                  help="lr = base_learning_rate/(lr_offset + timestep/const)")
+                  'lr = base_learning_rate/(1.0+lr_offet+timestep)*const)')
+parser.add_option('-O', '--lr_offset', dest='lr_offset', type=int, default=0,
+                  help="lr=base_learning_rate/(1.0+timestep+lr_offset)*const)")
 parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
                   action='store_true', default=False,
                   help='Do histogram summaries')
@@ -74,6 +73,7 @@ opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
+opts.which_future = 1
 opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
 
 # Set opts.* parameters from a parameter file if you want:
@@ -119,12 +119,14 @@ future_outs = [wavenet_out]
 future_out = wavenet_out
 for i in xrange(1, opts.which_future):
     with tf.name_scope('future_'+str(i)):
-        if not opts.one_hot_input:
+        if opts.one_hot_input:
+            next_input = tf.nn.softmax(future_out)
+        else:
             # Should really sample instead of arg_max...
-            future_out = tf.reshape(tf.arg_max(future_out, dimension=2),
+            next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
                                     shape=(opts.batch_size, -1, 1))
-            future_out = mu_law_decode(future_out, opts.quantization_channels)
-    future_out = wavenet(future_out, opts, reuse=True, pad_reuse=False,
+            next_input = mu_law_decode(next_iput, opts.quantization_channels)
+    future_out = wavenet(next_input, opts, reuse=True, pad_reuse=False,
                          extra_pad_scope=str(i))
     future_outs.append(future_out)
 
@@ -147,9 +149,16 @@ tf.summary.scalar(name="loss", tensor=loss)
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
 adams_epsilon = tf.placeholder(tf.float32, shape=())
-optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
-                                   epsilon=adams_epsilon)
-minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+
+# We might want to run just measuring loss and not training,
+# perhaps to see what the loss variance is on the training.
+# in that case, set opts.base_learning_rate=0
+if opts.base_learning_rate > 0:
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
+                                       epsilon=adams_epsilon)
+    minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+else:
+    minimize = tf.constant(0)   # a noop.
 
 summaries = tf.summary.merge_all()
 
@@ -182,9 +191,9 @@ if opts.input_file is not None:
 # Main training loop:
 last_time = time.time()
 
-for global_step in xrange(opts.max_steps):
+for global_step in xrange(opts.lr_offset, opts.max_steps):
     cur_lr = opts.base_learning_rate/(
-        global_step/opts.canonical_epoch_size + opts.lr_offset)
+        1.0 + global_step/opts.canonical_epoch_size)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
         cur_loss, summary_pb = sess.run([loss, summaries, minimize],
