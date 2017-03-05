@@ -73,6 +73,7 @@ opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
+opts.which_future = 1
 opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
 
 # Set opts.* parameters from a parameter file if you want:
@@ -99,13 +100,10 @@ with tf.name_scope("input_massaging"):
 
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.
-    encoded_batch = mu_law_encode(tf.reshape(batch, [opts.batch_size, -1]),
+    encoded_batch = mu_law_encode(tf.reshape(batch, (opts.batch_size, -1)),
                                   opts.quantization_channels)
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
-
-    # shift left to predict one sample into the future.
-    encoded_batch = encoded_batch[:, 1:]
 
 wavenet_out = wavenet(batch, opts)
 
@@ -117,6 +115,21 @@ if opts.confusion_alpha > 0:
             tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
         tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
 
+future_outs = [wavenet_out]
+future_out = wavenet_out
+for i in xrange(1, opts.which_future):
+    with tf.name_scope('future_'+str(i)):
+        if opts.one_hot_input:
+            next_input = tf.nn.softmax(future_out)
+        else:
+            # Should really sample instead of arg_max...
+            next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
+                                    shape=(opts.batch_size, -1, 1))
+            next_input = mu_law_decode(next_iput, opts.quantization_channels)
+    future_out = wavenet(next_input, opts, reuse=True, pad_reuse=False,
+                         extra_pad_scope=str(i))
+    future_outs.append(future_out)
+
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables())
 
@@ -124,8 +137,12 @@ if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=wavenet_out[:, 0:-1], labels=encoded_batch))
+loss = 0
+for i_future, future_out in enumerate(future_outs):
+    loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+        logits=future_out[:, 0:-(i_future+1), :],
+        labels=encoded_batch[:, i_future+1:]))
+loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)
 
@@ -195,6 +212,7 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
             opts.output_file is not None:
         saver.save(sess, opts.output_file, global_step)
+
     sys.stdout.flush()
 
 print("Training done.")
