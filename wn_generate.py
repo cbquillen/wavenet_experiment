@@ -63,14 +63,15 @@ with tf.name_scope("Generate"):
 
     max_likeli_sample = tf.reshape(
         mu_law_decode(tf.argmax(out, axis=2), opts.quantization_channels), ())
-    max_likeli_sample = 2.0*max_likeli_sample + last_sample
+    max_likeli_sample = max_likeli_sample/opts.diff_scale + last_sample
 
     # Sample from the output distribution to feed back into the input:
     pick = tf.cumsum(out, axis=2)
     select = tf.random_uniform(shape=())
     x = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
     out = tf.reshape(
-        2.0*mu_law_decode(x, opts.quantization_channels), ()) + last_sample
+        mu_law_decode(x, opts.quantization_channels), ())/opts.diff_scale + \
+        last_sample
     out = tf.reshape(tf.clip_by_value(out, -1.0, 1.0), (1, 1, 1))
 
 saver = tf.train.Saver(tf.trainable_variables())

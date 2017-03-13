@@ -73,6 +73,7 @@ opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
+opts.diff_scale = 2.0   # Scale for difference quantization.
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -98,9 +99,10 @@ with tf.name_scope("input_massaging"):
 
     # We will try to predict a quantization of the difference to the next
     # sample of the input.
-    difference = (batch[:, 1:] - batch[:, :-1])        # -2 to 2 theoretically.
+    difference = tf.clip_by_value(
+        (batch[:, 1:] - batch[:, :-1])*opts.diff_scale, -1.0, 1.0)
     quantized_diff = mu_law_encode(
-        tf.reshape(difference*0.5, (opts.batch_size, -1)),
+        tf.reshape(difference, (opts.batch_size, -1)),
         opts.quantization_channels)
 
 out = wavenet(batch, opts)
