@@ -105,9 +105,10 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     with arg_scope([layers.conv2d],
                    reuse=reuse, padding='VALID', **normalizer_params):
 
-        inputs = padded(new_x=inputs, reuse=pad_reuse,
-                        pad=opts.input_kernel_size-1,
-                        scope='input_layer/pad'+extra_pad_scope)
+        if opts.input_kernel_size > 1:
+            inputs = padded(new_x=inputs, reuse=pad_reuse,
+                            pad=opts.input_kernel_size-1,
+                            scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(
             inputs, num_outputs=opts.num_outputs,
             kernel_size=opts.input_kernel_size, rate=1,
