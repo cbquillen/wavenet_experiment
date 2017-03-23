@@ -75,6 +75,7 @@ opts.quantization_channels = 256
 opts.one_hot_input = False
 opts.which_future = 1
 opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
+opts.max_checkpoints = 30
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -125,13 +126,14 @@ for i in xrange(1, opts.which_future):
             # Should really sample instead of arg_max...
             next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
                                     shape=(opts.batch_size, -1, 1))
-            next_input = mu_law_decode(next_iput, opts.quantization_channels)
+            next_input = mu_law_decode(next_input, opts.quantization_channels)
     future_out = wavenet(next_input, opts, reuse=True, pad_reuse=False,
                          extra_pad_scope=str(i))
     future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
-saver = tf.train.Saver(tf.trainable_variables())
+saver = tf.train.Saver(tf.trainable_variables(),
+                       max_to_keep=opts.max_checkpoints)
 
 if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
@@ -216,5 +218,6 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
     sys.stdout.flush()
 
 print("Training done.")
-saver.save(sess, opts.output_file)
+if opts.output_file is not None:
+    saver.save(sess, opts.output_file)
 sess.close()
