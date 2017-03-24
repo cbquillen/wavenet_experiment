@@ -73,6 +73,7 @@ opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
+opts.max_checkpoints = 30
 opts.diff_scale = 2.0   # Scale for difference quantization.
 
 # Set opts.* parameters from a parameter file if you want:
@@ -116,7 +117,8 @@ if opts.confusion_alpha > 0:
         tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
 
 # That should have created all training variables.  Now we can make a saver.
-saver = tf.train.Saver(tf.trainable_variables())
+saver = tf.train.Saver(tf.trainable_variables(),
+                       max_to_keep=opts.max_checkpoints)
 
 if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
@@ -197,5 +199,6 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
     sys.stdout.flush()
 
 print("Training done.")
-saver.save(sess, opts.output_file)
+if opts.output_file is not None:
+    saver.save(sess, opts.output_file)
 sess.close()
