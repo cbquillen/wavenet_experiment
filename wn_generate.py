@@ -28,18 +28,17 @@ parser.add_option('-i', '--input_file', dest='input_file',
                   default=None, help='Input checkpoint file')
 parser.add_option('-o', '--output_file', dest='output_file',
                   default='wn_sample.wav', help='Output generated wav file')
-parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
-                  type=int, default=100000, help='Audio chunk size per batch.')
-parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
-                  action='store_true', default=False,
-                  help='Do histogram summaries')
 parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   action='store_true', default=False,
                   help='Do batch normalization')
+parser.add_option("-z", '--zeros', default=16000, dest='initial_zeros',
+                  type=int, help='Initial warm-up zero-buffer samples')
 parser.add_option('-n', '--num_samples', default=32000, dest='num_samples',
                   type=int, help='Samples to generate')
 
 opts, cmdline_args = parser.parse_args()
+
+opts.histogram_summaries = False
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
@@ -79,6 +78,17 @@ with tf.name_scope("Generate"):
 saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
 
+if opts.initial_zeros > 0:
+    with tf.name_scope("Zeroize_state"):
+        if opts.one_hot_input:
+            zero = tf.constant(value=opts.quantization_channels/2,
+                               shape=(1, opts.initial_zeros))
+            zero = tf.one_hot(zero, depth=opts.quantization_channels)
+        else:
+            zero = tf.constant(value=0.0, shape=(1, opts.initial_zeros, 1))
+        zeroize = wavenet(zero, opts, reuse=True, pad_reuse=True,
+                          is_training=False)
+
 # Finalize the graph, so that any new ops cannot be created.
 # this is good for avoiding memory leaks.
 tf.get_default_graph().finalize()
@@ -89,6 +99,11 @@ sess.run(init)
 
 print("Restoring from", opts.input_file)
 saver.restore(sess, opts.input_file)
+
+if opts.initial_zeros > 0:
+    print("Zeroing state")
+    sess.run(zeroize)
+    print("Starting generation")
 
 output = np.zeros((opts.num_samples), dtype=np.float32)
 
