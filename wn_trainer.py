@@ -18,6 +18,7 @@ import tensorflow.contrib.layers as layers
 from audio_reader import AudioReader
 from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet
+from confusion import update_confusion
 
 # Options from the command line:
 parser = optparse.OptionParser()
@@ -43,19 +44,15 @@ parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
 parser.add_option('-L', '--base_learning_rate', dest='base_learning_rate',
                   type=float, default=1e-03,
                   help='The initial learning rate. ' +
-                  'lr = base_learning_rate/(lr_offet + timestep/const)')
-parser.add_option('-O', '--lr_offset', dest='lr_offset',
-                  type=float, default=1.0,
-                  help="lr = base_learning_rate/(lr_offset + timestep/const)")
+                  'lr = base_learning_rate/(1.0+lr_offet+timestep)*const)')
+parser.add_option('-O', '--lr_offset', dest='lr_offset', type=int, default=0,
+                  help="lr=base_learning_rate/(1.0+timestep+lr_offset)*const)")
 parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
                   action='store_true', default=False,
                   help='Do histogram summaries')
 parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   action='store_true', default=False,
                   help='Do batch normalization')
-parser.add_option('-w', '--which_future', dest='which_future',
-                  type=int, default=1,
-                  help='Which sample in the future to predict')
 
 opts, cmdline_args = parser.parse_args()
 
@@ -66,28 +63,28 @@ opts.input_kernel_size = 32  # The size of the input layer kernel.
 opts.kernel_size = 2        # The size of other kernels.
 opts.num_outputs = 64       # The number of convolutional channels.
 opts.skip_dimension = 512   # The dimension for skip connections.
-opts.dilations = [[1, 2, 4, 8, 16, 32, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 128, 256, 512]]
+opts.dilations = [[1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]]
 opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
+opts.which_future = 1
+opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
+opts.max_checkpoints = 30
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
     with open(opts.param_file) as f:
         exec(f)
 
-assert opts.which_future > 0 and opts.which_future < 20
-
 # smaller audio chunks increase the timesteps per epoch:
 # this is normalized relative to a 100000 sample chunk.
-opts.canonical_epoch_size *= 100000/opts.audio_chunk_size
-
+opts.canonical_epoch_size *= 100000.0/opts.audio_chunk_size
 
 sess = tf.Session()
 
@@ -104,42 +101,66 @@ with tf.name_scope("input_massaging"):
 
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.
-    encoded_batch = mu_law_encode(tf.reshape(batch, [opts.batch_size, -1]),
+    encoded_batch = mu_law_encode(tf.reshape(batch, (opts.batch_size, -1)),
                                   opts.quantization_channels)
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-    # shift left to predict which_future samples into the future.
-    encoded_batch = encoded_batch[:, opts.which_future:]
-
 wavenet_out = wavenet(batch, opts)
+
+if opts.confusion_alpha > 0:
+    with tf.name_scope('confusion_matrix'):
+        dim = opts.quantization_channels
+        confusion = update_confusion(
+            opts, tf.reshape(tf.nn.softmax(wavenet_out[:, :-1, :]), (-1, dim)),
+            tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
+        tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
+
+future_outs = [wavenet_out]
+future_out = wavenet_out
 for i in xrange(1, opts.which_future):
-    if opts.one_hot_input:
-        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
-    else:
-        wavenet_out = tf.reshape(tf.arg_max(wavenet_out, dimension=2),
-                                 shape=(-1, -1, 1))
-        wavenet_out = mu_law_decode(wavenet_out, opts.quantization_channels)
-        wavenet_out = wavenet(wavenet_out, opts, reuse=True)
+    with tf.name_scope('future_'+str(i)):
+        if opts.one_hot_input:
+            next_input = tf.nn.softmax(future_out)
+        else:
+            # Should really sample instead of arg_max...
+            next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
+                                    shape=(opts.batch_size, -1, 1))
+            next_input = mu_law_decode(next_input, opts.quantization_channels)
+    future_out = wavenet(next_input, opts, reuse=True, pad_reuse=False,
+                         extra_pad_scope=str(i))
+    future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
-saver = tf.train.Saver(tf.trainable_variables())
+saver = tf.train.Saver(tf.trainable_variables(),
+                       max_to_keep=opts.max_checkpoints)
 
 if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=wavenet_out[:, 0:-opts.which_future], labels=encoded_batch))
+loss = 0
+for i_future, future_out in enumerate(future_outs):
+    loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+        logits=future_out[:, 0:-(i_future+1), :],
+        labels=encoded_batch[:, i_future+1:]))
+loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)
 
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
 adams_epsilon = tf.placeholder(tf.float32, shape=())
-optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
-                                   epsilon=adams_epsilon)
-minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+
+# We might want to run just measuring loss and not training,
+# perhaps to see what the loss variance is on the training.
+# in that case, set opts.base_learning_rate=0
+if opts.base_learning_rate > 0:
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
+                                       epsilon=adams_epsilon)
+    minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+else:
+    minimize = tf.constant(0)   # a noop.
 
 summaries = tf.summary.merge_all()
 
@@ -172,9 +193,9 @@ if opts.input_file is not None:
 # Main training loop:
 last_time = time.time()
 
-for global_step in xrange(opts.max_steps):
+for global_step in xrange(opts.lr_offset, opts.max_steps):
     cur_lr = opts.base_learning_rate/(
-        global_step/opts.canonical_epoch_size + opts.lr_offset)
+        1.0 + global_step/opts.canonical_epoch_size)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
         cur_loss, summary_pb = sess.run([loss, summaries, minimize],
@@ -186,15 +207,17 @@ for global_step in xrange(opts.max_steps):
                             feed_dict={learning_rate: cur_lr,
                             adams_epsilon: opts.epsilon})[0]
     new_time = time.time()
-    print("loss[{}]: {:.3f} dt {:.3f}".format(global_step, cur_loss,
-                                              new_time - last_time))
+    print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(
+        global_step, cur_loss, new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
             opts.output_file is not None:
         saver.save(sess, opts.output_file, global_step)
+
     sys.stdout.flush()
 
 print("Training done.")
-saver.save(sess, opts.output_file)
+if opts.output_file is not None:
+    saver.save(sess, opts.output_file)
 sess.close()

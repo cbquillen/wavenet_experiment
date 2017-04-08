@@ -22,26 +22,23 @@ from wavenet import wavenet
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
-parser.add_option('-g', '--generation_noise', default=0.001,
-                  type=float, help='Noise to add in generation')
 parser.add_option('-l', '--logdir', dest='logdir',
                   default=None, help='Tensorflow event logdir')
 parser.add_option('-i', '--input_file', dest='input_file',
                   default=None, help='Input checkpoint file')
 parser.add_option('-o', '--output_file', dest='output_file',
                   default='wn_sample.wav', help='Output generated wav file')
-parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
-                  type=int, default=100000, help='Audio chunk size per batch.')
-parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
-                  action='store_true', default=False,
-                  help='Do histogram summaries')
 parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   action='store_true', default=False,
                   help='Do batch normalization')
+parser.add_option("-z", '--zeros', default=16000, dest='initial_zeros',
+                  type=int, help='Initial warm-up zero-buffer samples')
 parser.add_option('-n', '--num_samples', default=32000, dest='num_samples',
                   type=int, help='Samples to generate')
 
 opts, cmdline_args = parser.parse_args()
+
+opts.histogram_summaries = False
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
@@ -62,14 +59,35 @@ last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 
 with tf.name_scope("Generate"):
-    out = wavenet(last_sample, opts, is_training=False)
-    x = tf.arg_max(out, dimension=2)
-    gen_sample = tf.reshape(mu_law_decode(x, opts.quantization_channels), ())
-    if not opts.one_hot_input:
+    out = tf.nn.softmax(wavenet(last_sample, opts, is_training=False))
+
+    max_likeli_sample = tf.reshape(
+        mu_law_decode(tf.argmax(out, axis=2), opts.quantization_channels), ())
+
+    # Sample from the output distribution to feed back into the input:
+    pick = tf.cumsum(out, axis=2)
+    select = tf.random_uniform(shape=())
+    x = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
+    if opts.one_hot_input:
+        out = tf.one_hot(x, depth=opts.quantization_channels)
+    else:
+        gen_sample = tf.reshape(
+            mu_law_decode(x, opts.quantization_channels), ())
         out = tf.reshape(gen_sample, (1, 1, 1))
 
 saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
+
+if opts.initial_zeros > 0:
+    with tf.name_scope("Zeroize_state"):
+        if opts.one_hot_input:
+            zero = tf.constant(value=opts.quantization_channels/2,
+                               shape=(1, opts.initial_zeros))
+            zero = tf.one_hot(zero, depth=opts.quantization_channels)
+        else:
+            zero = tf.constant(value=0.0, shape=(1, opts.initial_zeros, 1))
+        zeroize = wavenet(zero, opts, reuse=True, pad_reuse=True,
+                          is_training=False)
 
 # Finalize the graph, so that any new ops cannot be created.
 # this is good for avoiding memory leaks.
@@ -82,14 +100,17 @@ sess.run(init)
 print("Restoring from", opts.input_file)
 saver.restore(sess, opts.input_file)
 
+if opts.initial_zeros > 0:
+    print("Zeroing state")
+    sess.run(zeroize)
+    print("Starting generation")
+
 output = np.zeros((opts.num_samples), dtype=np.float32)
 
 last_time = time.time()
 for sample in xrange(opts.num_samples):
     output[sample], prev_out = sess.run(
-        fetches=[gen_sample, out], feed_dict={last_sample: prev_out})
-    prev_out += (np.random.random()-0.5)*opts.generation_noise
-    prev_out = np.clip(prev_out, -1.0, 1.0)
+        fetches=[max_likeli_sample, out], feed_dict={last_sample: prev_out})
     if sample % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(sample + 1,

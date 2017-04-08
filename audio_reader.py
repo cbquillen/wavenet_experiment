@@ -36,7 +36,7 @@ def randomize_files(files):
 def find_files(directory, pattern='*.wav'):
     '''Recursively finds all files matching the pattern.'''
     files = []
-    for root, dirnames, filenames in os.walk(directory):
+    for root, dirnames, filenames in os.walk(directory, followlinks=True):
         for filename in fnmatch.filter(filenames, pattern):
             files.append(os.path.join(root, filename))
     return files
@@ -161,7 +161,7 @@ class AudioReader(object):
                 if self.silence_threshold is not None:
                     # Remove silence
                     audio = trim_silence(audio[:, 0], self.silence_threshold)
-                    audio = audio.reshape(-1, 1)
+                    # audio = audio.reshape(-1, 1)
                     if audio.size == 0:
                         print("Warning: {} was ignored as it contains only "
                               "silence. Consider decreasing trim_silence "

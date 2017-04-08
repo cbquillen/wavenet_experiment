@@ -26,11 +26,13 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
     conv = layers.conv2d(x, num_outputs=num_outputs, rate=rate,
                          kernel_size=kernel_size,
                          activation_fn=tf.nn.tanh,
+                         normalizer_params=None,
                          scope=scope + '/conv')
 
     gate = layers.conv2d(x, num_outputs=num_outputs, rate=rate,
                          kernel_size=kernel_size,
                          activation_fn=tf.nn.sigmoid,
+                         normalizer_params=None,
                          scope=scope + '/gate')
 
     with tf.name_scope(scope + '/prod'):
@@ -68,6 +70,9 @@ def padded(new_x, pad, scope, reuse=False):
 
     with tf.variable_scope(scope, reuse=reuse):
         x = tf.get_variable('pad', shape=(1, pad, new_x.get_shape()[2]),
+                            collections=[tf.GraphKeys.GLOBAL_VARIABLES,
+                                         'padding'],
+                            initializer=tf.constant_initializer(),
                             trainable=False)
         y = tf.concat(values=(x, new_x), axis=1)
         x = tf.assign(x, y[:, -pad:, :])
@@ -75,9 +80,13 @@ def padded(new_x, pad, scope, reuse=False):
             return tf.identity(y)
 
 
-def wavenet(inputs, opts, is_training=True, reuse=False):
+def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
+            extra_pad_scope=''):
     '''
-    The wavenet model definition for training/generation.
+    The wavenet model definition for training/generation.  Note that if we
+    use wavenets recursively, we will want separate padding variables for
+    each "layer".  So we have a separate reuse flag for padding() and
+    an additional thing to add to the scope for padding() in that case.
     '''
 
     # Parameters for batch normalization
@@ -98,8 +107,10 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
     with arg_scope([layers.conv2d],
                    reuse=reuse, padding='VALID', **normalizer_params):
 
-        inputs = padded(new_x=inputs, reuse=reuse,
-                        pad=opts.input_kernel_size-1, scope='input_layer/pad')
+        if opts.input_kernel_size > 1:
+            inputs = padded(new_x=inputs, reuse=pad_reuse,
+                            pad=opts.input_kernel_size-1,
+                            scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(
             inputs, num_outputs=opts.num_outputs,
             kernel_size=opts.input_kernel_size, rate=1,
@@ -110,8 +121,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
                 x = padded(
-                    new_x=x, pad=rate*(opts.kernel_size-1), reuse=reuse,
-                    scope=block_rate+"/pad")
+                    new_x=x, pad=rate*(opts.kernel_size-1), reuse=pad_reuse,
+                    scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavnet_block(
                     x, opts.num_outputs, rate, opts.kernel_size,
@@ -121,15 +132,16 @@ def wavenet(inputs, opts, is_training=True, reuse=False):
                 with tf.name_scope(block_rate+"_skip".format(i_block, rate)):
                     skip_connections += skip_connection
 
-    with tf.name_scope('relu_skip'):
+    with tf.name_scope("relu_skip"):
         skip_connections = tf.nn.relu(skip_connections)
 
     with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse):
         x = layers.conv2d(
             skip_connections, num_outputs=opts.quantization_channels,
-            activation_fn=tf.nn.relu, scope='output_layer1')
+            activation_fn=tf.nn.tanh, scope='output_layer1')
 
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,
+            normalizer_params=None,
             activation_fn=None, scope='output_layer2')
     return x
