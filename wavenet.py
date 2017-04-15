@@ -12,7 +12,7 @@ from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_decode, mu_law_encode
 
 
-def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
+def wavnet_block(padded_x, x, num_outputs, rate, kernel_size, skip_dimension,
                  histogram_summaries, scope):
     '''
     wavnet_block: many important convolution parameters (reuse, kernel_size
@@ -23,12 +23,12 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
     drop in the "right" way.
     '''
 
-    conv = layers.conv2d(x, num_outputs=num_outputs, rate=rate,
+    conv = layers.conv2d(padded_x, num_outputs=num_outputs, rate=rate,
                          kernel_size=kernel_size,
                          activation_fn=tf.nn.tanh,
                          scope=scope + '/conv')
 
-    gate = layers.conv2d(x, num_outputs=num_outputs, rate=rate,
+    gate = layers.conv2d(padded_x, num_outputs=num_outputs, rate=rate,
                          kernel_size=kernel_size,
                          activation_fn=tf.nn.sigmoid,
                          scope=scope + '/gate')
@@ -41,9 +41,7 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
                         scope=scope + '/output_xform')
 
     with tf.name_scope(scope + '/residual'):
-        out_sz = out.get_shape()[1].value
-        out_sz = out_sz if out_sz is not None else tf.shape(out)[1]
-        residual = x[:, -out_sz:, :] + out
+        residual = x + out
 
     if skip_dimension != num_outputs:      # Upscale for more goodness.
         out = layers.conv2d(out, num_outputs=skip_dimension,
@@ -118,12 +116,12 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         for i_block, block_dilations in enumerate(opts.dilations):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
-                x = padded(
+                padded_x = padded(
                     new_x=x, pad=rate*(opts.kernel_size-1), reuse=pad_reuse,
                     scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavnet_block(
-                    x, opts.num_outputs, rate, opts.kernel_size,
+                    padded_x, x, opts.num_outputs, rate, opts.kernel_size,
                     opts.skip_dimension, opts.histogram_summaries,
                     scope=block_rate)
 
