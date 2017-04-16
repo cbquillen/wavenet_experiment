@@ -37,7 +37,7 @@ def wavnet_block(padded_x, x, num_outputs, rate, kernel_size, skip_dimension,
         out = conv * gate
 
     out = layers.conv2d(out, num_outputs=num_outputs, kernel_size=1,
-                        activation_fn=tf.nn.tanh,
+                        activation_fn=None,
                         scope=scope + '/output_xform')
 
     with tf.name_scope(scope + '/residual'):
@@ -56,12 +56,14 @@ def wavnet_block(padded_x, x, num_outputs, rate, kernel_size, skip_dimension,
     return residual, out        # out gets added to the skip connections.
 
 
-def padded(new_x, pad, scope, reuse=False):
+def padded(new_x, pad, scope, reuse=False, reverse=False):
     '''
     Pad new_x, and save the rightmost window for context for the next time
     we do the same convolution.  This context carries across utterances
     during training.  Using this trick also allows us to use the same
     wavenet() routine in training as well as generation.
+
+    reverse=True for reversing the direction of causality.
     '''
 
     with tf.variable_scope(scope, reuse=reuse):
@@ -70,8 +72,12 @@ def padded(new_x, pad, scope, reuse=False):
                                          'padding'],
                             initializer=tf.constant_initializer(),
                             trainable=False)
-        y = tf.concat(values=(x, new_x), axis=1)
-        x = tf.assign(x, y[:, -pad:, :])
+        if not reverse:
+            y = tf.concat(values=(x, new_x), axis=1)
+            x = tf.assign(x, y[:, -pad:, :])
+        else:
+            y = tf.concat(values=(new_x, x), axis=1)
+            x = tf.assign(x, y[:, :pad, :])
         with tf.get_default_graph().control_dependencies([x]):
             return tf.identity(y)
 
@@ -105,6 +111,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
 
         if opts.input_kernel_size > 1:
             inputs = padded(new_x=inputs, reuse=pad_reuse,
+                            reverse=opts.reverse,
                             pad=opts.input_kernel_size-1,
                             scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(
@@ -118,6 +125,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
                 padded_x = padded(
                     new_x=x, pad=rate*(opts.kernel_size-1), reuse=pad_reuse,
+                    reverse=opts.reverse,
                     scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavnet_block(

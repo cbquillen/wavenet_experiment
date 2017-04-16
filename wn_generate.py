@@ -39,6 +39,7 @@ parser.add_option('-n', '--num_samples', default=32000, dest='num_samples',
 opts, cmdline_args = parser.parse_args()
 
 opts.histogram_summaries = False
+opts.reverse = False
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.

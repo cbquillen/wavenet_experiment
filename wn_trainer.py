@@ -68,6 +68,7 @@ opts.dilations = [[1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
                   [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
                   [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
                   [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]]
+opts.reverse = False     # For revering the order of causality.
 opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
@@ -90,7 +91,7 @@ sess = tf.Session()
 
 coord = tf.train.Coordinator()  # Is this used for anything?
 data = AudioReader(opts.data_dir, coord, sample_rate=opts.sample_rate,
-                   sample_size=opts.audio_chunk_size,
+                   sample_size=opts.audio_chunk_size, reverse=opts.reverse,
                    silence_threshold=opts.silence_threshold, queue_size=16)
 
 data.start_threads(sess)         # start data reader threads.
@@ -141,9 +142,15 @@ if opts.histogram_summaries:
 
 loss = 0
 for i_future, future_out in enumerate(future_outs):
-    loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=future_out[:, 0:-(i_future+1), :],
-        labels=encoded_batch[:, i_future+1:]))
+    if not opts.reverse:
+        loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=future_out[:, :-(i_future+1), :],
+            labels=encoded_batch[:, i_future+1:]))
+    else:
+        loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=future_out[:, i_future+1:, :],
+            labels=encoded_batch[:, :-(i_future+1)]))
+
 loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)

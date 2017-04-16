@@ -92,6 +92,7 @@ class AudioReader(object):
                  coord,
                  sample_rate,
                  sample_size,
+                 reverse=False,
                  gc_enabled=None,
                  silence_threshold=None,
                  queue_size=32):
@@ -100,6 +101,7 @@ class AudioReader(object):
         self.sample_rate = sample_rate
         self.coord = coord
         self.sample_size = sample_size
+        self.reverse = reverse
         self.silence_threshold = silence_threshold
         self.gc_enabled = gc_enabled
         self.threads = []
@@ -169,12 +171,20 @@ class AudioReader(object):
                               .format(filename))
 
                 # Cut samples into fixed size pieces
-                buffer_ = np.append(buffer_, audio)
+                if not self.reverse:
+                    buffer_ = np.append(buffer_, audio)
+                else:
+                    buffer_ = np.append(audio, buffer_)
                 while len(buffer_) >= self.sample_size:
-                    piece = np.reshape(buffer_[:self.sample_size], [-1, 1])
+                    if not self.reverse:
+                        piece = np.reshape(buffer_[:self.sample_size], [-1, 1])
+                        buffer_ = buffer_[self.sample_size:]
+                    else:
+                        piece = np.reshape(
+                           buffer_[-self.sample_size:], [-1, 1])
+                        buffer_ = buffer_[:-self.sample_size]
                     sess.run(self.enqueue,
                              feed_dict={self.sample_placeholder: piece})
-                    buffer_ = buffer_[self.sample_size:]
                     if self.gc_enabled:
                         sess.run(self.gc_enqueue,
                                  feed_dict={self.id_placeholder:
