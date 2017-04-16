@@ -1,6 +1,6 @@
 opts.canonical_epoch_size = 20000.0
 opts.batch_size = 1         # How many utterances to train at once.
-opts.input_kernel_size = 32  # The size of the input layer kernel.
+opts.input_kernel_size = 2  # The size of the input layer kernel.
 opts.num_outputs = 64       # The number of convolutional channels.
 opts.skip_dimension = 256   # The dimension for skip connections.
 opts.kernel_size = 2
