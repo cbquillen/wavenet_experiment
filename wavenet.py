@@ -12,7 +12,7 @@ from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_decode, mu_law_encode
 
 
-def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
+def wavnet_block(padded_x, x, num_outputs, rate, kernel_size, skip_dimension,
                  histogram_summaries, scope):
     '''
     wavnet_block: many important convolution parameters (reuse, kernel_size
@@ -23,13 +23,13 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
     drop in the "right" way.
     '''
 
-    conv = layers.conv2d(x, num_outputs=num_outputs, rate=rate,
+    conv = layers.conv2d(padded_x, num_outputs=num_outputs, rate=rate,
                          kernel_size=kernel_size,
                          activation_fn=tf.nn.tanh,
                          normalizer_params=None,
                          scope=scope + '/conv')
 
-    gate = layers.conv2d(x, num_outputs=num_outputs, rate=rate,
+    gate = layers.conv2d(padded_x, num_outputs=num_outputs, rate=rate,
                          kernel_size=kernel_size,
                          activation_fn=tf.nn.sigmoid,
                          normalizer_params=None,
@@ -39,13 +39,11 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
         out = conv * gate
 
     out = layers.conv2d(out, num_outputs=num_outputs, kernel_size=1,
-                        activation_fn=tf.nn.relu,
+                        activation_fn=None,
                         scope=scope + '/output_xform')
 
     with tf.name_scope(scope + '/residual'):
-        out_sz = out.get_shape()[1].value
-        out_sz = out_sz if out_sz is not None else tf.shape(out)[1]
-        residual = x[:, -out_sz:, :] + out
+        residual = x + out
 
     if skip_dimension != num_outputs:      # Upscale for more goodness.
         out = layers.conv2d(out, num_outputs=skip_dimension,
@@ -60,12 +58,14 @@ def wavnet_block(x, num_outputs, rate, kernel_size, skip_dimension,
     return residual, out        # out gets added to the skip connections.
 
 
-def padded(new_x, pad, scope, reuse=False):
+def padded(new_x, pad, scope, reuse=False, reverse=False):
     '''
     Pad new_x, and save the rightmost window for context for the next time
     we do the same convolution.  This context carries across utterances
     during training.  Using this trick also allows us to use the same
     wavenet() routine in training as well as generation.
+
+    reverse=True for reversing the direction of causality.
     '''
 
     with tf.variable_scope(scope, reuse=reuse):
@@ -74,8 +74,12 @@ def padded(new_x, pad, scope, reuse=False):
                                          'padding'],
                             initializer=tf.constant_initializer(),
                             trainable=False)
-        y = tf.concat(values=(x, new_x), axis=1)
-        x = tf.assign(x, y[:, -pad:, :])
+        if not reverse:
+            y = tf.concat(values=(x, new_x), axis=1)
+            x = tf.assign(x, y[:, -pad:, :])
+        else:
+            y = tf.concat(values=(new_x, x), axis=1)
+            x = tf.assign(x, y[:, :pad, :])
         with tf.get_default_graph().control_dependencies([x]):
             return tf.identity(y)
 
@@ -109,6 +113,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
 
         if opts.input_kernel_size > 1:
             inputs = padded(new_x=inputs, reuse=pad_reuse,
+                            reverse=opts.reverse,
                             pad=opts.input_kernel_size-1,
                             scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(
@@ -120,12 +125,13 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         for i_block, block_dilations in enumerate(opts.dilations):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
-                x = padded(
+                padded_x = padded(
                     new_x=x, pad=rate*(opts.kernel_size-1), reuse=pad_reuse,
+                    reverse=opts.reverse,
                     scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavnet_block(
-                    x, opts.num_outputs, rate, opts.kernel_size,
+                    padded_x, x, opts.num_outputs, rate, opts.kernel_size,
                     opts.skip_dimension, opts.histogram_summaries,
                     scope=block_rate)
 
