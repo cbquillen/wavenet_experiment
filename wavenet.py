@@ -144,7 +144,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse):
         x = layers.conv2d(
             skip_connections, num_outputs=opts.quantization_channels,
-            activation_fn=tf.nn.tanh, scope='output_layer1')
+            activation_fn=tf.nn.relu, scope='output_layer1')
 
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,
