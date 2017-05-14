@@ -42,9 +42,9 @@ def find_files(directory, pattern='*.wav'):
     return files
 
 
-def load_generic_audio(directory, sample_rate):
+def load_generic_audio(directory, sample_rate, pattern):
     '''Generator that yields audio waveforms from the directory.'''
-    files = find_files(directory)
+    files = find_files(directory, pattern)
     id_reg_exp = re.compile(FILE_PATTERN)
     print("files length: {}".format(len(files)))
     randomized_files = randomize_files(files)
@@ -93,6 +93,7 @@ class AudioReader(object):
                  sample_rate,
                  sample_size,
                  reverse=False,
+                 pattern="*.wav",
                  gc_enabled=None,
                  silence_threshold=None,
                  queue_size=32):
@@ -102,6 +103,7 @@ class AudioReader(object):
         self.coord = coord
         self.sample_size = sample_size
         self.reverse = reverse
+        self.pattern = pattern
         self.silence_threshold = silence_threshold
         self.gc_enabled = gc_enabled
         self.threads = []
@@ -120,7 +122,7 @@ class AudioReader(object):
         # TODO Find a better way to check this.
         # Checking inside the AudioReader's thread makes it hard to terminate
         # the execution of the script, so we do it in the constructor for now.
-        files = find_files(audio_dir)
+        files = find_files(audio_dir, self.pattern)
         if not files:
             raise ValueError("No audio files found in '{}'.".format(audio_dir))
         if self.gc_enabled and not_all_have_id(files):
@@ -155,7 +157,8 @@ class AudioReader(object):
         stop = False
         # Go through the dataset multiple times
         while not stop:
-            iterator = load_generic_audio(self.audio_dir, self.sample_rate)
+            iterator = load_generic_audio(self.audio_dir, self.sample_rate,
+                                          self.pattern)
             for audio, filename, category_id in iterator:
                 if self.coord.should_stop():
                     stop = True

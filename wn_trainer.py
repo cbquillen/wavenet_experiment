@@ -77,6 +77,7 @@ opts.one_hot_input = False
 opts.which_future = 1
 opts.confusion_alpha = 0.0      # Make this ~ 0.001 to see a confusion matrix.
 opts.max_checkpoints = 30
+opts.audio_pattern = "*.wav"
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -92,6 +93,7 @@ sess = tf.Session()
 coord = tf.train.Coordinator()  # Is this used for anything?
 data = AudioReader(opts.data_dir, coord, sample_rate=opts.sample_rate,
                    sample_size=opts.audio_chunk_size, reverse=opts.reverse,
+                   pattern=opts.audio_pattern,
                    silence_threshold=opts.silence_threshold, queue_size=16)
 
 data.start_threads(sess)         # start data reader threads.
