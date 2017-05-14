@@ -55,6 +55,7 @@ use the same one that you used in training.
 - You can train looking more than one sample into the future.
 - I get better accuracy and faster convergence, at least last time I compared.
 - You can use N-point à trous convolutions in generation.
+- You can train a temporally-reversed model.
 - Last I checked, ibab's setup changes the audio chunk size with different
   batches.  Doing this slows things down dramatically.  Because I carry
   context across chunks I can use constant chunk sizes without overlap.

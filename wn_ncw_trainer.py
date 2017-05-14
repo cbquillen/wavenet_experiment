@@ -110,15 +110,17 @@ with tf.name_scope("input_massaging"):
                                   opts.quantization_channels)
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
+    batch = tf.transpose(batch, [0, 2, 1])
 
-wavenet_out = wavenet(batch, opts)
+wavenet_out = wavenet(batch, opts, data_format='NCW')
 
 if opts.confusion_alpha > 0:
     with tf.name_scope('confusion_matrix'):
         dim = opts.quantization_channels
+        sm_out = tf.nn.softmax(tf.transpose(wavenet_out[:, :, :-1], [0, 2, 1]))
         confusion = update_confusion(
-            opts, tf.reshape(tf.nn.softmax(wavenet_out[:, :-1, :]), (-1, dim)),
-            tf.reshape(tf.one_hot(encoded_batch, dim), (-1, dim)))
+            opts, tf.reshape(sm_out, (-1, dim)),
+            tf.reshape(tf.one_hot(encoded_batch[:, 1:], dim), (-1, dim)))
         tf.summary.image("confusion", tf.reshape(confusion, (1, dim, dim, 1)))
 
 future_outs = [wavenet_out]
@@ -126,14 +128,14 @@ future_out = wavenet_out
 for i in xrange(1, opts.which_future):
     with tf.name_scope('future_'+str(i)):
         if opts.one_hot_input:
-            next_input = tf.nn.softmax(future_out)
+            next_input = tf.nn.softmax(future_out, dim=1)
         else:
             # Should really sample instead of arg_max...
-            next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
-                                    shape=(opts.batch_size, -1, 1))
+            next_input = tf.reshape(tf.arg_max(future_out, dimension=1),
+                                    shape=(opts.batch_size, 1, -1))
             next_input = mu_law_decode(next_input, opts.quantization_channels)
     future_out = wavenet(next_input, opts, reuse=True, pad_reuse=False,
-                         extra_pad_scope=str(i))
+                         extra_pad_scope=str(i), data_format='NCW')
     future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
@@ -146,6 +148,7 @@ if opts.histogram_summaries:
 
 loss = 0
 for i_future, future_out in enumerate(future_outs):
+    future_out = tf.transpose(future_out, [0, 2, 1])
     if not opts.reverse:
         loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits=future_out[:, :-(i_future+1), :],
@@ -177,6 +180,7 @@ if opts.base_learning_rate > 0:
         minimize = optimizer.apply_gradients(clipped_gradients)
     else:
         minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+
 else:
     minimize = tf.constant(0)   # a noop.
 

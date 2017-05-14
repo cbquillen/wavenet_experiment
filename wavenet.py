@@ -58,7 +58,7 @@ def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate, kernel_size,
     return residual, out        # out gets added to the skip connections.
 
 
-def padded(new_x, pad, scope, reuse=False, reverse=False):
+def padded(new_x, pad, scope, reuse=False, reverse=False, data_format=None):
     '''
     Pad new_x, and save the rightmost window for context for the next time
     we do the same convolution.  This context carries across utterances
@@ -69,23 +69,35 @@ def padded(new_x, pad, scope, reuse=False, reverse=False):
     '''
 
     with tf.variable_scope(scope, reuse=reuse):
-        x = tf.get_variable('pad', shape=(1, pad, new_x.get_shape()[2]),
-                            collections=[tf.GraphKeys.GLOBAL_VARIABLES,
-                                         'padding'],
-                            initializer=tf.constant_initializer(),
-                            trainable=False)
-        if not reverse:
-            y = tf.concat(values=(x, new_x), axis=1)
-            x = tf.assign(x, y[:, -pad:, :])
+
+        if data_format is 'NCW':
+            x = tf.get_variable(
+                'pad', shape=(1, new_x.get_shape()[1], pad),
+                collections=[tf.GraphKeys.GLOBAL_VARIABLES, 'padding'],
+                initializer=tf.constant_initializer(), trainable=False)
+            if not reverse:
+                y = tf.concat(values=(x, new_x), axis=2)
+                x = tf.assign(x, y[:, :, -pad:])
+            else:
+                y = tf.concat(values=(new_x, x), axis=2)
+                x = tf.assign(x, y[:, :, :pad])
         else:
-            y = tf.concat(values=(new_x, x), axis=1)
-            x = tf.assign(x, y[:, :pad, :])
+            x = tf.get_variable(
+                'pad', shape=(1, pad, new_x.get_shape()[2]),
+                collections=[tf.GraphKeys.GLOBAL_VARIABLES, 'padding'],
+                initializer=tf.constant_initializer(), trainable=False)
+            if not reverse:
+                y = tf.concat(values=(x, new_x), axis=1)
+                x = tf.assign(x, y[:, -pad:, :])
+            else:
+                y = tf.concat(values=(new_x, x), axis=1)
+                x = tf.assign(x, y[:, :pad, :])
         with tf.get_default_graph().control_dependencies([x]):
             return tf.identity(y)
 
 
 def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
-            extra_pad_scope=''):
+            data_format=None, extra_pad_scope=''):
     '''
     The wavenet model definition for training/generation.  Note that if we
     use wavenets recursively, we will want separate padding variables for
@@ -108,13 +120,14 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
 
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavenet_block().
-    with arg_scope([layers.conv2d],
+    with arg_scope([layers.conv2d], data_format=data_format,
                    reuse=reuse, padding='VALID', **normalizer_params):
 
         if opts.input_kernel_size > 1:
             inputs = padded(new_x=inputs, reuse=pad_reuse,
                             reverse=opts.reverse,
                             pad=opts.input_kernel_size-1,
+                            data_format=data_format,
                             scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(
             inputs, num_outputs=opts.num_outputs,
@@ -127,7 +140,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
                 padded_x = padded(
                     new_x=x, pad=rate*(opts.kernel_size-1), reuse=pad_reuse,
-                    reverse=opts.reverse,
+                    reverse=opts.reverse, data_format=data_format,
                     scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavenet_block(
@@ -141,7 +154,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     with tf.name_scope("relu_skip"):
         skip_connections = tf.nn.relu(skip_connections)
 
-    with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse):
+    with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse,
+                   data_format=data_format):
         x = layers.conv2d(
             skip_connections, num_outputs=opts.quantization_channels,
             activation_fn=tf.nn.relu, scope='output_layer1')
