@@ -17,3 +17,5 @@ opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = False
 opts.audio_chunk_size = 50000
+opts.n_users = 98
+opts.n_phones = 183

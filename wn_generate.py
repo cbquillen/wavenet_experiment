@@ -60,7 +60,8 @@ last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 
 with tf.name_scope("Generate"):
-    out = tf.nn.softmax(wavenet(last_sample, opts, is_training=False))
+    out, users, phone = wavenet(last_sample, opts, is_training=False)
+    out = tf.nn.softmax(out)
 
     max_likeli_sample = tf.reshape(
         mu_law_decode(tf.argmax(out, axis=2), opts.quantization_channels), ())
@@ -87,8 +88,8 @@ if opts.initial_zeros > 0:
             zero = tf.one_hot(zero, depth=opts.quantization_channels)
         else:
             zero = tf.constant(value=0.0, shape=(1, opts.initial_zeros, 1))
-        zeroize = wavenet(zero, opts, reuse=True, pad_reuse=True,
-                          is_training=False)
+        zeroize, _, _ = wavenet(zero, opts, reuse=True, pad_reuse=True,
+                                is_training=False)
 
 # Finalize the graph, so that any new ops cannot be created.
 # this is good for avoiding memory leaks.

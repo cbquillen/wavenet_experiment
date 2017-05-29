@@ -159,9 +159,22 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         x = layers.conv2d(
             skip_connections, num_outputs=opts.quantization_channels,
             activation_fn=tf.nn.relu, scope='output_layer1')
-
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,
             normalizer_params=None,
             activation_fn=None, scope='output_layer2')
-    return x
+        user = layers.conv2d(
+            skip_connections, num_outputs=opts.n_users,
+            activation_fn=tf.nn.relu, scope='output_layer1u')
+        user = layers.conv2d(
+            user, num_outputs=opts.n_users,
+            normalizer_params=None,
+            activation_fn=None, scope='output_layer2u')
+        align = layers.conv2d(
+            skip_connections, num_outputs=opts.n_phones,
+            activation_fn=tf.nn.relu, scope='output_layer1a')
+        align = layers.conv2d(
+            align, num_outputs=opts.n_phones,
+            normalizer_params=None,
+            activation_fn=None, scope='output_layer2a')
+    return x, user, align

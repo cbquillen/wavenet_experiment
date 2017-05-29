@@ -1,30 +1,10 @@
-# Imported from ibab's wavenet https://github.com/ibab/tensorflow-wavenet
-import fnmatch
 import os
 import random
 import re
 import threading
-
 import librosa
 import numpy as np
 import tensorflow as tf
-
-FILE_PATTERN = r'p([0-9]+)_([0-9]+)\.wav'
-
-
-def get_category_cardinality(files):
-    id_reg_expression = re.compile(FILE_PATTERN)
-    min_id = None
-    max_id = None
-    for filename in files:
-        matches = id_reg_expression.findall(filename)[0]
-        id, recording_id = [int(id_) for id_ in matches]
-        if min_id is None or id < min_id:
-            min_id = id
-        if max_id is None or id > max_id:
-            max_id = id
-
-    return min_id, max_id
 
 
 def randomize_files(files):
@@ -33,54 +13,70 @@ def randomize_files(files):
         yield files[file_index]
 
 
-def find_files(directory, pattern='*.wav'):
-    '''Recursively finds all files matching the pattern.'''
+def load_audio_alignments(alignment_list_file, sample_rate):
+    '''L:oad the audio waveforms and alignments from a list file.
+       The file format is
+       wav_path user_# : phone#_1 phone#_2 ... phone#_N
+       where phone#_t* ints are per-frame phone labels at 100 frames/second.
+    '''
+    assert sample_rate % 100 == 0        # We'll need this.
+
+    epoch = 0
     files = []
-    for root, dirnames, filenames in os.walk(directory, followlinks=True):
-        for filename in fnmatch.filter(filenames, pattern):
-            files.append(os.path.join(root, filename))
-    return files
+    alignments = {}
+    iphone = iuser = 0
+
+    with open(alignment_list_file) as f:
+        for line in f:
+            a = line.rstrip().split()
+            path = a.pop(0)
+            user = int(a.pop(0))
+            if user >= iuser:
+                iuser = user+1
+            a.pop(0)
+            frame_labels = np.array(map(int, a))
+            for i, phone in enumerate(frame_labels):
+                if phone >= iphone:
+                    iphone = phone+1
+            files.append(path)
+            alignments[path] = frame_labels, user
+    print("files length: {} users {} phones {}".format(
+        len(files), iuser, iphone))
+    return files, alignments, iuser, iphone
 
 
-def load_generic_audio(directory, sample_rate, pattern):
-    '''Generator that yields audio waveforms from the directory.'''
-    files = find_files(directory, pattern)
-    id_reg_exp = re.compile(FILE_PATTERN)
-    print("files length: {}".format(len(files)))
-    randomized_files = randomize_files(files)
-    for filename in randomized_files:
-        ids = id_reg_exp.findall(filename)
-        if not ids:
-            # The file name does not match the pattern containing ids, so
-            # there is no id.
-            category_id = None
-        else:
-            # The file name matches the pattern for containing ids.
-            category_id = int(ids[0][0])
+def audio_iterator(files, alignments, sample_rate):
+    epoch = 0
+
+    random.shuffle(files)
+    for filename in files:
+        frame_labels, user_id = alignments[filename]
         audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
-        audio = audio.reshape(-1, 1)
-        yield audio, filename, category_id
+        sample_labels = frame_labels.repeat(sample_rate/100)
+        audio = audio[:sample_labels.shape[0]]  # clip off the excess.
+        user = np.zeros(sample_labels.shape[0], dtype=np.int32)
+        user[:] = user_id
+        yield audio, filename, user, sample_labels
+    print "Epoch {} ended".format(epoch)
+    epoch += 1
 
 
-def trim_silence(audio, threshold):
+def trim_silence(audio, user, alignment, threshold):
     '''Removes silence at the beginning and end of a sample.'''
     energy = librosa.feature.rmse(audio)
     frames = np.nonzero(energy > threshold)
     indices = librosa.core.frames_to_samples(frames)[1]
 
-    # Note: indices can be an empty array, if the whole audio was silence.
-    return audio[indices[0]:indices[-1]] if indices.size else audio[0:0]
-
-
-def not_all_have_id(files):
-    ''' Return true iff any of the filenames does not conform to the pattern
-        we require for determining the category id.'''
-    id_reg_exp = re.compile(FILE_PATTERN)
-    for file in files:
-        ids = id_reg_exp.findall(file)
-        if not ids:
-            return True
-    return False
+    # Note: indices can be an empty array if the whole audio was silence.
+    if indices.size:
+        audio = audio[indices[0]:indices[-1]]
+        user = user[indices[0]:indices[-1]]
+        alignment = alignment[indices[0]:indices[-1]]
+    else:
+        audio = audio[0:0]
+        user = user[0:0]
+        alignment = alignment[0:0]
+    return audio, alignment, user
 
 
 class AudioReader(object):
@@ -88,85 +84,55 @@ class AudioReader(object):
     and enqueues them into a TensorFlow queue.'''
 
     def __init__(self,
-                 audio_dir,
+                 alignment_list_file,
                  coord,
                  sample_rate,
                  sample_size,
                  reverse=False,
-                 pattern="*.wav",
-                 gc_enabled=None,
                  silence_threshold=None,
                  queue_size=32):
-        self.epoch = 0
-        self.audio_dir = audio_dir
-        self.sample_rate = sample_rate
         self.coord = coord
+        self.sample_rate = sample_rate
         self.sample_size = sample_size
         self.reverse = reverse
-        self.pattern = pattern
         self.silence_threshold = silence_threshold
-        self.gc_enabled = gc_enabled
         self.threads = []
         self.sample_placeholder = tf.placeholder(dtype=tf.float32, shape=None)
+        self.user_placeholder = tf.placeholder(dtype=tf.int32, shape=None)
+        self.align_placeholder = tf.placeholder(dtype=tf.int32, shape=None)
         self.queue = tf.PaddingFIFOQueue(queue_size,
-                                         ['float32'],
-                                         shapes=[(None, 1)])
-        self.enqueue = self.queue.enqueue([self.sample_placeholder])
+                                         ['float32', 'int32', 'int32'],
+                                         shapes=[(None,), (None,), (None,)])
+        self.enqueue = self.queue.enqueue([self.sample_placeholder,
+                                           self.align_placeholder,
+                                           self.user_placeholder])
 
-        if self.gc_enabled:
-            self.id_placeholder = tf.placeholder(dtype=tf.int32, shape=())
-            self.gc_queue = tf.PaddingFIFOQueue(queue_size, ['int32'],
-                                                shapes=[()])
-            self.gc_enqueue = self.gc_queue.enqueue([self.id_placeholder])
-
-        # TODO Find a better way to check this.
-        # Checking inside the AudioReader's thread makes it hard to terminate
-        # the execution of the script, so we do it in the constructor for now.
-        files = find_files(audio_dir, self.pattern)
-        if not files:
-            raise ValueError("No audio files found in '{}'.".format(audio_dir))
-        if self.gc_enabled and not_all_have_id(files):
-            raise ValueError("Global conditioning is enabled, but file names "
-                             "do not conform to pattern having id.")
-        # Determine the number of mutually-exclusive categories we will
-        # accomodate in our embedding table.
-        if self.gc_enabled:
-            _, self.gc_category_cardinality = get_category_cardinality(files)
-            # Add one to the largest index to get the number of categories,
-            # since tf.nn.embedding_lookup expects zero-indexing. This
-            # means one or more at the bottom correspond to unused entries
-            # in the embedding lookup table. But that's a small waste of memory
-            # to keep the code simpler, and preserves correspondance between
-            # the id one specifies when generating, and the ids in the
-            # file names.
-            self.gc_category_cardinality += 1
-            print("Detected --gc_cardinality={}".format(
-                  self.gc_category_cardinality))
-        else:
-            self.gc_category_cardinality = None
+        self.files, self.alignments, self.n_users, self.n_phones = \
+            load_audio_alignments(alignment_list_file, sample_rate)
 
     def dequeue(self, num_elements):
         output = self.queue.dequeue_many(num_elements)
         return output
 
-    def dequeue_gc(self, num_elements):
-        return self.gc_queue.dequeue_many(num_elements)
-
     def thread_main(self, sess):
         buffer_ = np.array([])
+        buf_user = np.array([])
+        buf_align = np.array([])
         stop = False
         # Go through the dataset multiple times
         while not stop:
-            iterator = load_generic_audio(self.audio_dir, self.sample_rate,
-                                          self.pattern)
-            for audio, filename, category_id in iterator:
+            iterator = audio_iterator(self.files, self.alignments,
+                                      self.sample_rate)
+            for audio, filename, user, alignment in iterator:
                 if self.coord.should_stop():
                     stop = True
                     break
                 if self.silence_threshold is not None:
                     # Remove silence
-                    audio = trim_silence(audio[:, 0], self.silence_threshold)
-                    # audio = audio.reshape(-1, 1)
+                    audio, user, alignment = \
+                        trim_silence(audio, user, alignment,
+                                     self.silence_threshold)
+
                     if audio.size == 0:
                         print("Warning: {} was ignored as it contains only "
                               "silence. Consider decreasing trim_silence "
@@ -176,24 +142,32 @@ class AudioReader(object):
                 # Cut samples into fixed size pieces
                 if not self.reverse:
                     buffer_ = np.append(buffer_, audio)
+                    buf_user = np.append(buf_user, user)
+                    buf_align = np.append(buf_align, alignment)
                 else:
                     buffer_ = np.append(audio, buffer_)
+                    buf_user = np.append(user, buf_user)
+                    buf_align = np.append(alignment, buf_align)
+
                 while len(buffer_) >= self.sample_size:
                     if not self.reverse:
-                        piece = np.reshape(buffer_[:self.sample_size], [-1, 1])
+                        piece = buffer_[:self.sample_size]
+                        piece_user = buf_user[:self.sample_size]
+                        piece_align = buf_align[:self.sample_size]
                         buffer_ = buffer_[self.sample_size:]
+                        buf_user = buf_user[:self.sample_size]
+                        buf_align = buf_align[:self.sample_size]
                     else:
-                        piece = np.reshape(
-                           buffer_[-self.sample_size:], [-1, 1])
+                        piece = buffer_[-self.sample_size:]
+                        piece_user = buf_user[-self.sample_size:]
+                        piece_align = buf_align[-self.sample_size:]
                         buffer_ = buffer_[:-self.sample_size]
+                        buf_user = buf_user[:-self.sample_size]
+                        buf_align = buf_align[:-self.sample_size]
                     sess.run(self.enqueue,
-                             feed_dict={self.sample_placeholder: piece})
-                    if self.gc_enabled:
-                        sess.run(self.gc_enqueue,
-                                 feed_dict={self.id_placeholder:
-                                            category_id})
-            print "Epoch {} ended".format(self.epoch)
-            self.epoch += 1
+                             feed_dict={self.sample_placeholder: piece,
+                                        self.user_placeholder: piece_user,
+                                        self.align_placeholder: piece_align})
 
     def start_threads(self, sess, n_threads=1):
         for _ in range(n_threads):

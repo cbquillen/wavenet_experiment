@@ -71,7 +71,7 @@ with tf.name_scope("Zeroize_state"):
     else:
         zero = np.zeros((1, opts.initial_zeros, 1), dtype=np.float32)
 
-forward_out = wavenet(in_audio, opts, is_training=False)
+forward_out, _, _ = wavenet(in_audio, opts, is_training=False)
 forward = sample(forward_out, opts.quantization_channels, opts.deterministic)
 
 forward_var_list = []
