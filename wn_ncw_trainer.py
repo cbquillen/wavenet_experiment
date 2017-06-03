@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 '''
+NOT working yet on this branch!
+
 This is a quick demo hack of a wavenet trainer, with some help
 of infrastructure from ibab.
 

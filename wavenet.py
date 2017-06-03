@@ -58,7 +58,8 @@ def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate, kernel_size,
     return residual, out        # out gets added to the skip connections.
 
 
-def padded(new_x, pad, scope, reuse=False, reverse=False, data_format=None):
+def padded(new_x, pad, scope, n_chunks, reuse=False,
+           reverse=False, data_format=None):
     '''
     Pad new_x, and save the rightmost window for context for the next time
     we do the same convolution.  This context carries across utterances
@@ -72,7 +73,7 @@ def padded(new_x, pad, scope, reuse=False, reverse=False, data_format=None):
 
         if data_format is 'NCW':
             x = tf.get_variable(
-                'pad', shape=(1, new_x.get_shape()[1], pad),
+                'pad', shape=(n_chunks, new_x.get_shape()[1], pad),
                 collections=[tf.GraphKeys.GLOBAL_VARIABLES, 'padding'],
                 initializer=tf.constant_initializer(), trainable=False)
             if not reverse:
@@ -83,7 +84,7 @@ def padded(new_x, pad, scope, reuse=False, reverse=False, data_format=None):
                 x = tf.assign(x, y[:, :, :pad])
         else:
             x = tf.get_variable(
-                'pad', shape=(1, pad, new_x.get_shape()[2]),
+                'pad', shape=(n_chunks, pad, new_x.get_shape()[2]),
                 collections=[tf.GraphKeys.GLOBAL_VARIABLES, 'padding'],
                 initializer=tf.constant_initializer(), trainable=False)
             if not reverse:
@@ -125,9 +126,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
 
         if opts.input_kernel_size > 1:
             inputs = padded(new_x=inputs, reuse=pad_reuse,
-                            reverse=opts.reverse,
-                            pad=opts.input_kernel_size-1,
-                            data_format=data_format,
+                            reverse=opts.reverse, pad=opts.input_kernel_size-1,
+                            n_chunks=opts.n_chunks, data_format=data_format,
                             scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(
             inputs, num_outputs=opts.num_outputs,
@@ -139,7 +139,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
                 padded_x = padded(
-                    new_x=x, pad=rate*(opts.kernel_size-1), reuse=pad_reuse,
+                    new_x=x, pad=rate*(opts.kernel_size-1),
+                    reuse=pad_reuse, n_chunks=opts.n_chunks,
                     reverse=opts.reverse, data_format=data_format,
                     scope=block_rate+"/pad"+extra_pad_scope)
 

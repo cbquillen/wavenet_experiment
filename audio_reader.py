@@ -45,20 +45,24 @@ def load_audio_alignments(alignment_list_file, sample_rate):
     return files, alignments, iuser, iphone
 
 
+# Never exits.
 def audio_iterator(files, alignments, sample_rate):
     epoch = 0
 
-    random.shuffle(files)
-    for filename in files:
-        frame_labels, user_id = alignments[filename]
-        audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
-        sample_labels = frame_labels.repeat(sample_rate/100)
-        audio = audio[:sample_labels.shape[0]]  # clip off the excess.
-        user = np.zeros(sample_labels.shape[0], dtype=np.int32)
-        user[:] = user_id
-        yield audio, filename, user, sample_labels
-    print "Epoch {} ended".format(epoch)
-    epoch += 1
+    while True:
+        random.shuffle(files)
+        for filename in files:
+            frame_labels, user_id = alignments[filename]
+            audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
+            sample_labels = frame_labels.repeat(sample_rate/100)
+            audio = audio[:sample_labels.shape[0]]  # clip off the excess.
+            user = np.zeros(sample_labels.shape[0], dtype=np.int32)
+            user[:] = user_id
+            assert len(audio) == len(sample_labels) == len(user)
+            yield filename, audio, user, sample_labels
+
+        print "Epoch {} ended".format(epoch)
+        epoch += 1
 
 
 def trim_silence(audio, user, alignment, threshold):
@@ -90,12 +94,14 @@ class AudioReader(object):
                  sample_size,
                  reverse=False,
                  silence_threshold=None,
-                 queue_size=32):
+                 n_chunks=5,
+                 queue_size=4):
         self.coord = coord
         self.sample_rate = sample_rate
         self.sample_size = sample_size
         self.reverse = reverse
         self.silence_threshold = silence_threshold
+        self.n_chunks = n_chunks
         self.threads = []
         self.sample_placeholder = tf.placeholder(dtype=tf.float32, shape=None)
         self.user_placeholder = tf.placeholder(dtype=tf.int32, shape=None)
@@ -114,40 +120,58 @@ class AudioReader(object):
         output = self.queue.dequeue_many(num_elements)
         return output
 
+    # Thread main is a little tricky.  We want to enqueue multiple chunks,
+    # each from a separate utterance (so that we have speaker diversity
+    # for each training minibatch.
+    # We keep an array of buffers for this.  We cut fixed sized chunks
+    # out of the buffers.  As each buffer exhausts, we load a new
+    # audio file (using audio_iterator) and concatenate it with the
+    # buffer remnants.
     def thread_main(self, sess):
-        buffer_ = np.array([])
-        buf_user = np.array([])
-        buf_align = np.array([])
+        # buffers: the array of buffers.
+        buffers = [(np.array([], dtype=np.float32),
+                    np.array([], dtype=np.int32),
+                    np.array([], dtype=np.int32))]*self.n_chunks
+        # iterator.next() will never stop.  It will allow us to go
+        # through the data set multiple times.
+        iterator = audio_iterator(self.files, self.alignments,
+                                  self.sample_rate)
         stop = False
-        # Go through the dataset multiple times
         while not stop:
-            iterator = audio_iterator(self.files, self.alignments,
-                                      self.sample_rate)
-            for audio, filename, user, alignment in iterator:
+            # The buffers array has 3 elements per entry:
+            # 1) audio.  2) user ID. 3) Phone alignments.
+            for i, (buffer_, buf_user, buf_align) in enumerate(buffers):
                 if self.coord.should_stop():
                     stop = True
                     break
-                if self.silence_threshold is not None:
-                    # Remove silence
-                    audio, user, alignment = \
-                        trim_silence(audio, user, alignment,
-                                     self.silence_threshold)
 
-                    if audio.size == 0:
-                        print("Warning: {} was ignored as it contains only "
-                              "silence. Consider decreasing trim_silence "
-                              "threshold, or adjust volume of the audio."
-                              .format(filename))
+                assert len(buffer_) == len(buf_user) == len(buf_align)
 
                 # Cut samples into fixed size pieces
-                if not self.reverse:
-                    buffer_ = np.append(buffer_, audio)
-                    buf_user = np.append(buf_user, user)
-                    buf_align = np.append(buf_align, alignment)
-                else:
-                    buffer_ = np.append(audio, buffer_)
-                    buf_user = np.append(user, buf_user)
-                    buf_align = np.append(alignment, buf_align)
+                # top up the current buffers[i] element if it
+                # is too short.
+                while len(buffer_) < self.sample_size:
+                    filename, audio, user, alignment = iterator.next()
+                    if self.silence_threshold is not None:
+                        # Remove silence
+                        audio, user, alignment = \
+                            trim_silence(audio, user, alignment,
+                                         self.silence_threshold)
+
+                        if audio.size == 0:
+                            print("Warning: {} was ignored as it contains "
+                                  "only silence. Consider decreasing "
+                                  "trim_silence threshold, or adjust volume "
+                                  "of the audio.".format(filename))
+
+                    if not self.reverse:
+                        buffer_ = np.append(buffer_, audio)
+                        buf_user = np.append(buf_user, user)
+                        buf_align = np.append(buf_align, alignment)
+                    else:
+                        buffer_ = np.append(audio, buffer_)
+                        buf_user = np.append(user, buf_user)
+                        buf_align = np.append(alignment, buf_align)
 
                 while len(buffer_) >= self.sample_size:
                     if not self.reverse:
@@ -155,8 +179,8 @@ class AudioReader(object):
                         piece_user = buf_user[:self.sample_size]
                         piece_align = buf_align[:self.sample_size]
                         buffer_ = buffer_[self.sample_size:]
-                        buf_user = buf_user[:self.sample_size]
-                        buf_align = buf_align[:self.sample_size]
+                        buf_user = buf_user[self.sample_size:]
+                        buf_align = buf_align[self.sample_size:]
                     else:
                         piece = buffer_[-self.sample_size:]
                         piece_user = buf_user[-self.sample_size:]
@@ -168,6 +192,7 @@ class AudioReader(object):
                              feed_dict={self.sample_placeholder: piece,
                                         self.user_placeholder: piece_user,
                                         self.align_placeholder: piece_align})
+                buffers[i] = (buffer_, buf_user, buf_align)
 
     def start_threads(self, sess, n_threads=1):
         for _ in range(n_threads):

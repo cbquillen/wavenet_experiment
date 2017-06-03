@@ -39,7 +39,7 @@ parser.add_option('-S', '--silence_threshold', dest='silence_threshold',
                   type=float, default=0.2,
                   help='Silence classifier energy threshold')
 parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
-                  type=int, default=50000, help='Audio chunk size per batch.')
+                  type=int, default=10000, help='Audio chunk size per batch.')
 parser.add_option('-L', '--base_learning_rate', dest='base_learning_rate',
                   type=float, default=1e-03,
                   help='The initial learning rate. ' +
@@ -57,7 +57,7 @@ opts, cmdline_args = parser.parse_args()
 
 # Options that can be set in a parameter file:
 opts.canonical_epoch_size = 20000.0
-opts.batch_size = 1         # How many utterances to train at once.
+opts.n_chunks = 5           # How many utterance chunks to train at once.
 opts.input_kernel_size = 32  # The size of the input layer kernel.
 opts.kernel_size = 4        # The size of other kernels.
 opts.num_outputs = 64       # The number of convolutional channels.
@@ -91,7 +91,8 @@ sess = tf.Session()
 coord = tf.train.Coordinator()  # Is this used for anything?
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    sample_size=opts.audio_chunk_size, reverse=False,
-                   silence_threshold=opts.silence_threshold, queue_size=16)
+                   silence_threshold=opts.silence_threshold, n_chunks=4,
+                   queue_size=4)
 assert opts.n_phones == data.n_phones
 assert opts.n_users == data.n_users
 
@@ -99,12 +100,12 @@ data.start_threads(sess)         # start data reader threads.
 
 # Define the computational graph.
 with tf.name_scope("input_massaging"):
-    batch, user, align = data.dequeue(num_elements=opts.batch_size)
-    batch = tf.reshape(batch, (opts.batch_size, -1, 1))
+    batch, user, align = data.dequeue(num_elements=opts.n_chunks)
+    batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.
-    encoded_batch = mu_law_encode(tf.reshape(batch, (opts.batch_size, -1)),
+    encoded_batch = mu_law_encode(tf.reshape(batch, (opts.n_chunks, -1)),
                                   opts.quantization_channels)
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
