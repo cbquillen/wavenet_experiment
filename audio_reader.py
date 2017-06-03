@@ -173,25 +173,25 @@ class AudioReader(object):
                         buf_user = np.append(user, buf_user)
                         buf_align = np.append(alignment, buf_align)
 
-                while len(buffer_) >= self.sample_size:
-                    if not self.reverse:
-                        piece = buffer_[:self.sample_size]
-                        piece_user = buf_user[:self.sample_size]
-                        piece_align = buf_align[:self.sample_size]
-                        buffer_ = buffer_[self.sample_size:]
-                        buf_user = buf_user[self.sample_size:]
-                        buf_align = buf_align[self.sample_size:]
-                    else:
-                        piece = buffer_[-self.sample_size:]
-                        piece_user = buf_user[-self.sample_size:]
-                        piece_align = buf_align[-self.sample_size:]
-                        buffer_ = buffer_[:-self.sample_size]
-                        buf_user = buf_user[:-self.sample_size]
-                        buf_align = buf_align[:-self.sample_size]
-                    sess.run(self.enqueue,
-                             feed_dict={self.sample_placeholder: piece,
-                                        self.user_placeholder: piece_user,
-                                        self.align_placeholder: piece_align})
+                # Send one piece
+                if not self.reverse:
+                    piece = buffer_[:self.sample_size]
+                    piece_user = buf_user[:self.sample_size]
+                    piece_align = buf_align[:self.sample_size]
+                    buffer_ = buffer_[self.sample_size:]
+                    buf_user = buf_user[self.sample_size:]
+                    buf_align = buf_align[self.sample_size:]
+                else:
+                    piece = buffer_[-self.sample_size:]
+                    piece_user = buf_user[-self.sample_size:]
+                    piece_align = buf_align[-self.sample_size:]
+                    buffer_ = buffer_[:-self.sample_size]
+                    buf_user = buf_user[:-self.sample_size]
+                    buf_align = buf_align[:-self.sample_size]
+                sess.run(self.enqueue,
+                         feed_dict={self.sample_placeholder: piece,
+                                    self.user_placeholder: piece_user,
+                                    self.align_placeholder: piece_align})
                 buffers[i] = (buffer_, buf_user, buf_align)
 
     def start_threads(self, sess, n_threads=1):

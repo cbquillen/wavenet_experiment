@@ -76,6 +76,7 @@ opts.one_hot_input = False
 opts.max_checkpoints = 30
 opts.clip = None
 opts.reverse = False  # not used in this version..
+opts.user_dim = 10    # User vector dimension to use.
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -100,7 +101,7 @@ data.start_threads(sess)         # start data reader threads.
 
 # Define the computational graph.
 with tf.name_scope("input_massaging"):
-    batch, user, align = data.dequeue(num_elements=opts.n_chunks)
+    batch, user, alignment = data.dequeue(num_elements=opts.n_chunks)
     batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
     # We will try to predict the encoded_batch, which is a quantized version
@@ -110,7 +111,14 @@ with tf.name_scope("input_massaging"):
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-wavenet_out, user_out, align_out = wavenet(batch, opts)
+    # In synthesis, we may or may not want to specify the
+    # user vector directly.  So leave that out of wavenet().
+    user = tf.one_hot(user, depth=opts.n_users)
+    user = layers.conv2d(user, num_outputs=opts.user_dim,
+                         kernel_size=(1,), rate=1, activation_fn=None,
+                         reuse=False, scope='user_vec')
+
+wavenet_out = wavenet((batch, user, alignment), opts)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables(),
@@ -120,18 +128,9 @@ if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-audio_xent = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
     logits=wavenet_out[:, :-1, :], labels=encoded_batch[:, 1:]))
-user_xent = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=user_out, labels=user))
-align_xent = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=align_out, labels=align))
 
-loss = audio_xent + user_xent + align_xent
-
-tf.summary.scalar(name="audio_xent", tensor=audio_xent)
-tf.summary.scalar(name="user_xent", tensor=user_xent)
-tf.summary.scalar(name="align_xent", tensor=align_xent)
 tf.summary.scalar(name="loss", tensor=loss)
 
 learning_rate = tf.placeholder(tf.float32, shape=())
@@ -191,19 +190,17 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
         1.0 + global_step/opts.canonical_epoch_size)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
-        cur_loss, cur_xent, summary_pb = sess.run(
-            [loss, audio_xent, summaries, minimize],
-            feed_dict={learning_rate: cur_lr,
-                       adams_epsilon: opts.epsilon})[0:3]
+        cur_loss, summary_pb = sess.run([loss, summaries, minimize],
+                                        feed_dict={learning_rate: cur_lr,
+                                        adams_epsilon: opts.epsilon})[0:2]
         summary_writer.add_summary(summary_pb, global_step)
     else:
-        cur_loss, cur_xent = sess.run(
-            [loss, audio_xent, minimize],
-            feed_dict={learning_rate: cur_lr,
-                       adams_epsilon: opts.epsilon})[0:2]
+        cur_loss = sess.run([loss, minimize],
+                            feed_dict={learning_rate: cur_lr,
+                            adams_epsilon: opts.epsilon})[0]
     new_time = time.time()
-    print("loss[{}]: {:.3f} xent {:.3f} dt {:.3f} lr {:.4g}".format(
-        global_step, cur_loss, cur_xent, new_time - last_time, cur_lr))
+    print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(
+        global_step, cur_loss, new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
