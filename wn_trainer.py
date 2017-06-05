@@ -92,8 +92,8 @@ sess = tf.Session()
 coord = tf.train.Coordinator()  # Is this used for anything?
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    sample_size=opts.audio_chunk_size, reverse=False,
-                   silence_threshold=opts.silence_threshold, n_chunks=4,
-                   queue_size=4)
+                   silence_threshold=opts.silence_threshold,
+                   n_chunks=opts.n_chunks, queue_size=opts.n_chunks)
 assert opts.n_phones == data.n_phones
 assert opts.n_users == data.n_users
 
