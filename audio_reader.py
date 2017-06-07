@@ -33,8 +33,8 @@ def load_audio_alignments(alignment_list_file, sample_rate):
             user = int(a.pop(0))
             if user >= iuser:
                 iuser = user+1
-            a.pop(0)
-            frame_labels = np.array(map(int, a))
+            assert a.pop(0) == ':'
+            frame_labels = np.array(map(int, a), dtype=np.int32)
             for i, phone in enumerate(frame_labels):
                 if phone >= iphone:
                     iphone = phone+1
@@ -56,8 +56,7 @@ def audio_iterator(files, alignments, sample_rate):
             audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
             sample_labels = frame_labels.repeat(sample_rate/100)
             audio = audio[:sample_labels.shape[0]]  # clip off the excess.
-            user = np.zeros(sample_labels.shape[0], dtype=np.int32)
-            user[:] = user_id
+            user = np.full((sample_labels.shape[0],), user_id, dtype=np.int32)
             assert len(audio) == len(sample_labels) == len(user)
             yield filename, audio, user, sample_labels
 
@@ -87,18 +86,12 @@ class AudioReader(object):
     '''Generic background audio reader that preprocesses audio files
     and enqueues them into a TensorFlow queue.'''
 
-    def __init__(self,
-                 alignment_list_file,
-                 coord,
-                 sample_rate,
-                 sample_size,
-                 reverse=False,
-                 silence_threshold=None,
-                 n_chunks=5,
-                 queue_size=4):
+    def __init__(self, alignment_list_file, coord, sample_rate,
+                 chunk_size, reverse=False, silence_threshold=None,
+                 n_chunks=5, queue_size=5):
         self.coord = coord
         self.sample_rate = sample_rate
-        self.sample_size = sample_size
+        self.chunk_size = chunk_size
         self.reverse = reverse
         self.silence_threshold = silence_threshold
         self.n_chunks = n_chunks
@@ -147,10 +140,10 @@ class AudioReader(object):
 
                 assert len(buffer_) == len(buf_user) == len(buf_align)
 
-                # Cut samples into fixed size pieces
+                # Cut samples into fixed size pieces.
                 # top up the current buffers[i] element if it
                 # is too short.
-                while len(buffer_) < self.sample_size:
+                while len(buffer_) < self.chunk_size:
                     filename, audio, user, alignment = iterator.next()
                     if self.silence_threshold is not None:
                         # Remove silence
@@ -175,19 +168,19 @@ class AudioReader(object):
 
                 # Send one piece
                 if not self.reverse:
-                    piece = buffer_[:self.sample_size]
-                    piece_user = buf_user[:self.sample_size]
-                    piece_align = buf_align[:self.sample_size]
-                    buffer_ = buffer_[self.sample_size:]
-                    buf_user = buf_user[self.sample_size:]
-                    buf_align = buf_align[self.sample_size:]
+                    piece = buffer_[:self.chunk_size]
+                    piece_user = buf_user[:self.chunk_size]
+                    piece_align = buf_align[:self.chunk_size]
+                    buffer_ = buffer_[self.chunk_size:]
+                    buf_user = buf_user[self.chunk_size:]
+                    buf_align = buf_align[self.chunk_size:]
                 else:
-                    piece = buffer_[-self.sample_size:]
-                    piece_user = buf_user[-self.sample_size:]
-                    piece_align = buf_align[-self.sample_size:]
-                    buffer_ = buffer_[:-self.sample_size]
-                    buf_user = buf_user[:-self.sample_size]
-                    buf_align = buf_align[:-self.sample_size]
+                    piece = buffer_[-self.chunk_size:]
+                    piece_user = buf_user[-self.chunk_size:]
+                    piece_align = buf_align[-self.chunk_size:]
+                    buffer_ = buffer_[:-self.chunk_size]
+                    buf_user = buf_user[:-self.chunk_size]
+                    buf_align = buf_align[:-self.chunk_size]
                 sess.run(self.enqueue,
                          feed_dict={self.sample_placeholder: piece,
                                     self.user_placeholder: piece_user,
