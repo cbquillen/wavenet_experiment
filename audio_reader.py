@@ -7,12 +7,6 @@ import numpy as np
 import tensorflow as tf
 
 
-def randomize_files(files):
-    for file in files:
-        file_index = random.randint(0, (len(files) - 1))
-        yield files[file_index]
-
-
 def load_audio_alignments(alignment_list_file, sample_rate):
     '''L:oad the audio waveforms and alignments from a list file.
        The file format is
@@ -45,7 +39,7 @@ def load_audio_alignments(alignment_list_file, sample_rate):
     return files, alignments, iuser, iphone
 
 
-# Never exits.
+# Never finishes.
 def audio_iterator(files, alignments, sample_rate):
     epoch = 0
 
