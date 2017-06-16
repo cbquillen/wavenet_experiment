@@ -82,7 +82,12 @@ def align_iterator(data_file):
                     dur = opts.max_silence
                 plist.append(phone)
                 durlist.append(dur)
-            alignments.append((np.array(plist, dtype=np.int32),
+            phone_array = np.array(plist, dtype=np.int32)
+            # make the plist a two element array, the current phone and
+            # the next through some hackery.
+            phone_array = np.append(phone_array.repeat(2), phone_array[-1])
+            phone_array = phone_array[1:].reshape(-1, 2)
+            alignments.append((phone_array,
                                np.array(durlist, dtype=np.int32)))
 
     while True:
@@ -104,10 +109,11 @@ class AlignReader(object):
         self.chunk_size = chunk_size
         self.n_chunks = n_chunks
         self.threads = []
-        self.pPhones = tf.placeholder(dtype=tf.int32, shape=(chunk_size,))
+        self.pPhones = tf.placeholder(dtype=tf.int32, shape=(chunk_size, 2))
         self.pDurs = tf.placeholder(dtype=tf.int32, shape=(chunk_size,))
-        self.queue = tf.PaddingFIFOQueue(queue_size, ['int32', 'int32'],
-                                         shapes=[(chunk_size,), (chunk_size,)])
+        self.queue = tf.PaddingFIFOQueue(
+            queue_size, ['int32', 'int32'],
+            shapes=[(chunk_size, 2), (chunk_size,)])
         self.enqueue = self.queue.enqueue([self.pPhones, self.pDurs])
 
     def dequeue(self, num_elements):
@@ -121,7 +127,7 @@ class AlignReader(object):
     # buffer remnants.
     def thread_main(self, sess):
         # buffers: the array of buffers.
-        buffers = [(np.array([], dtype=np.int32),
+        buffers = [(np.array([], dtype=np.int32).reshape(0, 2),
                     np.array([], dtype=np.int32))]*self.n_chunks
 
         stop = False
@@ -144,14 +150,14 @@ class AlignReader(object):
                     # go through the data set multiple times.
                     phones, durs = self.iterator.next()
 
-                    buf_phones = np.append(buf_phones, phones)
+                    buf_phones = np.append(buf_phones, phones, axis=0)
                     buf_durs = np.append(buf_durs, durs)
-                    assert buf_phones.shape == buf_durs.shape
+                    assert buf_phones.shape[0] == buf_durs.shape[0]
 
                 # Send one piece
-                piece_phones = buf_phones[:self.chunk_size]
+                piece_phones = buf_phones[:self.chunk_size, :]
                 piece_durs = buf_durs[:self.chunk_size]
-                buf_phones = buf_phones[self.chunk_size:]
+                buf_phones = buf_phones[self.chunk_size:, :]
                 buf_durs = buf_durs[self.chunk_size:]
 
                 sess.run(self.enqueue,
@@ -185,7 +191,8 @@ for i, s in enumerate(cell.zero_state(opts.n_chunks, tf.float32)):
 
 with tf.name_scope("input_massaging"):
     [phones, durs] = align_reader.dequeue(opts.n_chunks)
-    phone_vec = tf.one_hot(phones, depth=n_phones)
+    phone_vec = tf.one_hot(phones, depth=n_phones, axis=-1)
+    phone_vec = tf.reshape(phone_vec, (opts.n_chunks, -1, n_phones*2))
     dur_vec = tf.reshape(tf.cast(durs, tf.float32), (opts.n_chunks, -1, 1))
 
 # Define the computational graph.
