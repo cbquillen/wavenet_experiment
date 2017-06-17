@@ -187,7 +187,8 @@ cell = tf.contrib.rnn.LSTMCell(num_units=opts.num_units, num_proj=1)
 zero_state = cell.zero_state(opts.n_chunks, tf.float32)
 state_list = []
 for i, s in enumerate(cell.zero_state(opts.n_chunks, tf.float32)):
-    state_list.append(tf.Variable(s, name="cur_state_"+str(i)))
+    state_list.append(
+        tf.get_variable(initializer=s, name="cur_state_"+str(i)))
 
 with tf.name_scope("input_massaging"):
     [phones, durs] = align_reader.dequeue(opts.n_chunks)
@@ -205,7 +206,7 @@ state_updates = []
 for i, state_var in enumerate(state_list):
     state_updates.append(tf.assign(state_var, state[i]))
 with tf.get_default_graph().control_dependencies(state_updates):
-    loss = 2.0*tf.nn.l2_loss(output - dur_vec)/opts.chunk_size/opts.n_chunks
+    loss = tf.norm(output - dur_vec, ord=1)/opts.chunk_size/opts.n_chunks
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables(),
@@ -285,8 +286,7 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
                        adams_epsilon: opts.epsilon})[0]
     new_time = time.time()
     print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(
-        global_step, math.sqrt(cur_loss),
-        new_time - last_time, cur_lr))
+        global_step, cur_loss, new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \

@@ -77,6 +77,8 @@ opts.max_checkpoints = 30
 opts.clip = None
 opts.reverse = False  # not used in this version..
 opts.user_dim = 10    # User vector dimension to use.
+opts.n_phones = 183
+opts.n_users = 98
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
