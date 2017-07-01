@@ -9,6 +9,7 @@ from __future__ import print_function
 import optparse
 import sys
 import time
+import os
 from operator import mul
 
 import numpy as np
@@ -85,20 +86,8 @@ pUser = tf.placeholder(tf.int32, shape=(1, 1), name='user')
 pPhone = tf.placeholder(tf.int32, shape=(1, 1), name='phone')
 
 with tf.name_scope("Generate"):
-    # In synthesis, we may or may not want to specify the
-    # user vector directly.  So leave that out of wavenet().
-    user = tf.one_hot(pUser, depth=opts.n_users)
-    user = layers.conv2d(user, num_outputs=opts.user_dim,
-                         kernel_size=(1,), rate=1, activation_fn=None,
-                         reuse=False, scope='user_vec')
     # for zeroizing:
-    zuser = tf.zeros((1, opts.initial_zeros), dtype=tf.int32)
-    zuser = tf.one_hot(zuser, depth=opts.n_users)
-    zuser = layers.conv2d(zuser, num_outputs=opts.user_dim,
-                          kernel_size=(1,), rate=1, activation_fn=None,
-                          reuse=True, scope='user_vec')
-
-    out = wavenet([last_sample, user, pPhone], opts, is_training=False)
+    out = wavenet([last_sample, pUser, pPhone], opts, is_training=False)
     out = tf.nn.softmax(out)
 
     max_likeli_sample = tf.reshape(
@@ -120,6 +109,7 @@ init = tf.global_variables_initializer()
 
 if opts.initial_zeros > 0:
     with tf.name_scope("Zeroize_state"):
+        zuser = tf.zeros((1, opts.initial_zeros), dtype=tf.int32)
         zalign = tf.constant(opts.silence_phone, shape=(1, opts.initial_zeros),
                              dtype=tf.int32)
         if opts.one_hot_input:
@@ -136,6 +126,7 @@ if opts.initial_zeros > 0:
 tf.get_default_graph().finalize()
 
 # Run on cpu only.
+os.environ['CUDA_VISIBLE_DEVICES'] = ''  # no gpus
 sess = tf.Session(config=tf.ConfigProto(device_count={'GPU': 0}))
 sess.run(init)
 

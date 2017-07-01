@@ -87,7 +87,7 @@ if opts.param_file is not None:
 
 # smaller audio chunks increase the timesteps per epoch:
 # this is normalized relative to a 100000 sample chunk.
-opts.canonical_epoch_size *= 100000.0/opts.audio_chunk_size
+opts.canonical_epoch_size *= 100000.0/(opts.audio_chunk_size*opts.n_chunks)
 
 sess = tf.Session()
 
@@ -112,13 +112,6 @@ with tf.name_scope("input_massaging"):
                                   opts.quantization_channels)
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
-
-    # In synthesis, we may or may not want to specify the
-    # user vector directly.  So leave that out of wavenet().
-    user = tf.one_hot(user, depth=opts.n_users)
-    user = layers.conv2d(user, num_outputs=opts.user_dim,
-                         kernel_size=(1,), rate=1, activation_fn=None,
-                         reuse=False, scope='user_vec')
 
 wavenet_out = wavenet((batch, user, alignment), opts)
 

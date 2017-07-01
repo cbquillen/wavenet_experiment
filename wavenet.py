@@ -128,16 +128,23 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     # unpack inputs.
     inputs, user, alignment = inputs
 
+    user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
+    alignment = tf.one_hot(alignment, depth=opts.n_phones,
+                           name='align_onehot')
+    conditioning = tf.concat([user, alignment], axis=2, name='input_concat')
+    if 'cond_dim' in vars(opts):
+        conditioning = layers.conv2d(conditioning, num_outputs=opts.cond_dim,
+                                     kernel_size=(1,), rate=1,
+                                     activation_fn=None,
+                                     reuse=reuse, scope='cond_vec')
+    if data_format == 'NCW':
+        conditioning = tf.transpose(conditioning, [0, 2, 1], name="cond_tr")
+
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavenet_block().
     with arg_scope([layers.conv2d], data_format=data_format,
                    reuse=reuse, padding='VALID', **normalizer_params):
 
-        alignment = tf.one_hot(alignment, depth=opts.n_phones,
-                               name='align_onehot')
-        conditioning = tf.concat([user, alignment],
-                                 axis=1 if data_format == 'NCS' else 2,
-                                 name='input_concat')
         delta = layers.conv2d(conditioning, num_outputs=opts.num_outputs,
                               kernel_size=(1,), rate=1, activation_fn=None,
                               biases_initializer=None,

@@ -33,7 +33,7 @@ def load_audio_alignments(alignment_list_file, sample_rate):
                 if phone >= iphone:
                     iphone = phone+1
             files.append(path)
-            alignments[path] = frame_labels, user
+            alignments[path] = user, frame_labels
     print("files length: {} users {} phones {}".format(
         len(files), iuser, iphone))
     return files, alignments, iuser, iphone
@@ -46,7 +46,7 @@ def audio_iterator(files, alignments, sample_rate):
     while True:
         random.shuffle(files)
         for filename in files:
-            frame_labels, user_id = alignments[filename]
+            user_id, frame_labels = alignments[filename]
             audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
             sample_labels = frame_labels.repeat(sample_rate/100)
             audio = audio[:sample_labels.shape[0]]  # clip off the excess.
@@ -73,7 +73,7 @@ def trim_silence(audio, user, alignment, threshold):
         audio = audio[0:0]
         user = user[0:0]
         alignment = alignment[0:0]
-    return audio, alignment, user
+    return audio, user, alignment
 
 
 class AudioReader(object):
@@ -97,8 +97,8 @@ class AudioReader(object):
                                          ['float32', 'int32', 'int32'],
                                          shapes=[(None,), (None,), (None,)])
         self.enqueue = self.queue.enqueue([self.sample_placeholder,
-                                           self.align_placeholder,
-                                           self.user_placeholder])
+                                           self.user_placeholder,
+                                           self.align_placeholder])
 
         self.files, self.alignments, self.n_users, self.n_phones = \
             load_audio_alignments(alignment_list_file, sample_rate)
