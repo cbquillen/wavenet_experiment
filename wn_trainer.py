@@ -79,6 +79,7 @@ opts.reverse = False  # not used in this version..
 opts.user_dim = 10    # User vector dimension to use.
 opts.n_phones = 183
 opts.n_users = 98
+opts.mfcc_weight = .1
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -103,7 +104,7 @@ data.start_threads(sess)         # start data reader threads.
 
 # Define the computational graph.
 with tf.name_scope("input_massaging"):
-    batch, user, alignment = data.dequeue(num_elements=opts.n_chunks)
+    batch, user, alignment, mfcc = data.dequeue(num_elements=opts.n_chunks)
     batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
     # We will try to predict the encoded_batch, which is a quantized version
@@ -113,7 +114,7 @@ with tf.name_scope("input_massaging"):
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-wavenet_out = wavenet((batch, user, alignment), opts)
+wavenet_out, omfcc = wavenet((batch, user, alignment), opts)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables(),
@@ -128,6 +129,13 @@ loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
 
 tf.summary.scalar(name="loss", tensor=loss)
 
+mfcc_loss = 0
+if opts.mfcc_weight > 0:
+    del_mfcc = mfcc-omfcc
+    mfcc_loss = opts.mfcc_weight*tf.reduce_mean(del_mfcc*del_mfcc)
+
+    tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
+
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
 adams_epsilon = tf.placeholder(tf.float32, shape=())
@@ -140,7 +148,7 @@ if opts.base_learning_rate > 0:
                                        epsilon=adams_epsilon)
     if opts.clip is not None:
         gradients = optimizer.compute_gradients(
-            loss, var_list=tf.trainable_variables())
+            loss + mfcc_loss, var_list=tf.trainable_variables())
         clipped_gradients = [(tf.clip_by_value(var, -opts.clip, opts.clip),
                               name) for var, name in gradients]
         minimize = optimizer.apply_gradients(clipped_gradients)
