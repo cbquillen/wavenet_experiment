@@ -79,6 +79,8 @@ opts.reverse = False  # not used in this version..
 opts.user_dim = 10    # User vector dimension to use.
 opts.n_phones = 183
 opts.n_users = 98
+opts.n_mfcc = 12
+opts.mfcc_weight = 0.001
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -95,7 +97,8 @@ coord = tf.train.Coordinator()  # Is this used for anything?
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    chunk_size=opts.audio_chunk_size, reverse=False,
                    silence_threshold=opts.silence_threshold,
-                   n_chunks=opts.n_chunks, queue_size=opts.n_chunks)
+                   n_chunks=opts.n_chunks, queue_size=opts.n_chunks,
+                   n_mfcc=opts.n_mfcc)
 assert opts.n_phones == data.n_phones
 assert opts.n_users == data.n_users
 
@@ -103,7 +106,7 @@ data.start_threads(sess)         # start data reader threads.
 
 # Define the computational graph.
 with tf.name_scope("input_massaging"):
-    batch, user, alignment = data.dequeue(num_elements=opts.n_chunks)
+    batch, user, alignment, mfcc = data.dequeue(num_elements=opts.n_chunks)
     batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
     # We will try to predict the encoded_batch, which is a quantized version
@@ -113,7 +116,7 @@ with tf.name_scope("input_massaging"):
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
 
-wavenet_out = wavenet((batch, user, alignment), opts)
+wavenet_out, omfcc = wavenet((batch, user, alignment), opts)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables(),
@@ -128,6 +131,13 @@ loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
 
 tf.summary.scalar(name="loss", tensor=loss)
 
+mfcc_loss = 0
+if opts.mfcc_weight > 0:
+    del_mfcc = mfcc-omfcc
+    mfcc_loss = tf.reduce_mean(del_mfcc*del_mfcc)
+
+    tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
+
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
 adams_epsilon = tf.placeholder(tf.float32, shape=())
@@ -140,12 +150,14 @@ if opts.base_learning_rate > 0:
                                        epsilon=adams_epsilon)
     if opts.clip is not None:
         gradients = optimizer.compute_gradients(
-            loss, var_list=tf.trainable_variables())
+            loss + opts.mfcc_weight*mfcc_loss,
+            var_list=tf.trainable_variables())
         clipped_gradients = [(tf.clip_by_value(var, -opts.clip, opts.clip),
                               name) for var, name in gradients]
         minimize = optimizer.apply_gradients(clipped_gradients)
     else:
-        minimize = optimizer.minimize(loss, var_list=tf.trainable_variables())
+        minimize = optimizer.minimize(loss + opts.mfcc_weight*mfcc_loss,
+                                      var_list=tf.trainable_variables())
 else:
     minimize = tf.constant(0)   # a noop.
 
@@ -185,17 +197,19 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
         1.0 + global_step/opts.canonical_epoch_size)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
-        cur_loss, summary_pb = sess.run([loss, summaries, minimize],
-                                        feed_dict={learning_rate: cur_lr,
-                                        adams_epsilon: opts.epsilon})[0:2]
+        cur_loss, cur_mfcc_loss, summary_pb = sess.run(
+            [loss, mfcc_loss, summaries, minimize],
+            feed_dict={learning_rate: cur_lr,
+                       adams_epsilon: opts.epsilon})[0:3]
         summary_writer.add_summary(summary_pb, global_step)
     else:
-        cur_loss = sess.run([loss, minimize],
+        cur_loss, cur_mfcc_loss = sess.run(
+                            [loss, mfcc_loss, minimize],
                             feed_dict={learning_rate: cur_lr,
-                            adams_epsilon: opts.epsilon})[0]
+                                       adams_epsilon: opts.epsilon})[0:2]
     new_time = time.time()
-    print("loss[{}]: {:.3f} dt {:.3f} lr {:.4g}".format(
-        global_step, cur_loss, new_time - last_time, cur_lr))
+    print("loss[{}]: {:.3f} mfcc {:.3f} dt {:.3f} lr {:.4g}".format(
+        global_step, cur_loss, cur_mfcc_loss, new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \

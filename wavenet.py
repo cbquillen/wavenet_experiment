@@ -184,10 +184,16 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse,
                    data_format=data_format):
         x = layers.conv2d(
-            skip_connections, num_outputs=opts.quantization_channels,
+            skip_connections, num_outputs=opts.quantization_channels,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
+        mfcc = layers.conv2d(
+            x, num_outputs=opts.quantization_channels,   # ?
+            activation_fn=tf.nn.relu, scope='mfcc_layer1')
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,
             normalizer_params=None,
             activation_fn=None, scope='output_layer2')
-    return x
+        mfcc = layers.conv2d(
+            mfcc, num_outputs=opts.n_mfcc, normalizer_params=None,
+            activation_fn=None, scope='mfcc_layer2')
+    return x, mfcc
