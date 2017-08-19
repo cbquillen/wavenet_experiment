@@ -63,11 +63,7 @@ opts.kernel_size = 4        # The size of other kernels.
 opts.num_outputs = 64       # The number of convolutional channels.
 opts.num_outputs2 = opts.num_outputs  # The "inner" convolutional channels.
 opts.skip_dimension = 256   # The dimension for skip connections.
-opts.dilations = [[1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
-                  [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]]
+opts.dilations = [[2**N for N in range(10)]] * 5
 opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
@@ -75,6 +71,7 @@ opts.quantization_channels = 256
 opts.one_hot_input = False
 opts.max_checkpoints = 30
 opts.clip = None
+opts.which_future = 1  # Iterate prediction this many times.
 opts.reverse = False  # not used in this version..
 opts.user_dim = 10    # User vector dimension to use.
 opts.n_phones = 183
@@ -107,16 +104,34 @@ data.start_threads(sess)         # start data reader threads.
 # Define the computational graph.
 with tf.name_scope("input_massaging"):
     batch, user, alignment, mfcc = data.dequeue(num_elements=opts.n_chunks)
-    batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.
-    encoded_batch = mu_law_encode(tf.reshape(batch, (opts.n_chunks, -1)),
-                                  opts.quantization_channels)
+    encoded_batch = mu_law_encode(batch, opts.quantization_channels)
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
+    else:
+        batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
-wavenet_out, omfcc = wavenet((batch, user, alignment), opts)
+wavenet_out, omfcc = wavenet((batch, user, alignment), opts,
+                             is_training=opts.base_learning_rate > 0)
+future_outs = [wavenet_out]
+future_out = wavenet_out
+
+for i in xrange(1, opts.which_future):
+    with tf.name_scope('future_'+str(i)):
+        if opts.one_hot_input:
+            next_input = tf.nn.softmax(future_out)
+        else:
+            # Should really sample instead of arg_max...
+            next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
+                                    shape=(opts.n_chunks, -1, 1))
+            next_input = mu_law_decode(next_input, opts.quantization_channels)
+        future_out, _ = wavenet((next_input, user, alignment), opts,
+                                reuse=True, pad_reuse=False,
+                                extra_pad_scope=str(i),
+                                is_training=opts.base_learning_rate > 0)
+    future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables(),
@@ -128,6 +143,18 @@ if opts.histogram_summaries:
 
 loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
     logits=wavenet_out[:, :-1, :], labels=encoded_batch[:, 1:]))
+loss = 0
+for i_future, future_out in enumerate(future_outs):
+    if not opts.reverse:
+        loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=future_out[:, :-(i_future+1), :],
+            labels=encoded_batch[:, i_future+1:]))
+    else:
+        loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=future_out[:, i_future+1:, :],
+            labels=encoded_batch[:, :-(i_future+1)]))
+
+loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)
 
