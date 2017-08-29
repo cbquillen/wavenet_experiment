@@ -45,6 +45,7 @@ opts.silence_phone = 0
 opts.user_dim = 10    # User vector dimension to use.
 opts.n_phones = 183
 opts.n_users = 98
+opts.n_mfcc = 12
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
@@ -87,7 +88,7 @@ pPhone = tf.placeholder(tf.int32, shape=(1, 1), name='phone')
 
 with tf.name_scope("Generate"):
     # for zeroizing:
-    out = wavenet([last_sample, pUser, pPhone], opts, is_training=False)
+    out, _ = wavenet([last_sample, pUser, pPhone], opts, is_training=False)
     out = tf.nn.softmax(out)
 
     max_likeli_sample = tf.reshape(
@@ -118,8 +119,8 @@ if opts.initial_zeros > 0:
             zero = tf.one_hot(zero, depth=opts.quantization_channels)
         else:
             zero = tf.constant(value=0.0, shape=(1, opts.initial_zeros, 1))
-        zeroize = wavenet([zero, zuser, zalign], opts,
-                          reuse=True, pad_reuse=True, is_training=False)
+        zeroize, _ = wavenet([zero, zuser, zalign], opts,
+                             reuse=True, pad_reuse=True, is_training=False)
 
 # Finalize the graph, so that any new ops cannot be created.
 # this is good for avoiding memory leaks.

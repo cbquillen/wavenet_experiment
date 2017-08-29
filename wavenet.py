@@ -194,7 +194,6 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             normalizer_params=None,
             activation_fn=None, scope='output_layer2')
         mfcc = layers.conv2d(
-            mfcc, num_outputs=1, normalizer_params=None,
+            mfcc, num_outputs=opts.n_mfcc, normalizer_params=None,
             activation_fn=None, scope='mfcc_layer2')
-        mfcc = tf.reshape(mfcc, (opts.n_chunks, -1,))
     return x, mfcc
