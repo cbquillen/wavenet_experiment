@@ -220,8 +220,10 @@ if opts.input_file is not None:
 last_time = time.time()
 
 for global_step in xrange(opts.lr_offset, opts.max_steps):
-    cur_lr = opts.base_learning_rate/(
-        1.0 + global_step/opts.canonical_epoch_size)
+
+    # Decrease time-step by a factor of 10 for every 5 canonical epochs:
+    cur_lr = opts.base_learning_rate*10.0**(
+             -global_step/opts.canonical_epoch_size/5.0)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
         cur_loss, cur_mfcc_loss, summary_pb = sess.run(
