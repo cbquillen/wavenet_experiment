@@ -12,7 +12,7 @@ from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_decode, mu_law_encode
 
 
-def wavenet_block(padded_x, x, conditioning, num_outputs, num_outputs2, rate,
+def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate,
                   kernel_size, skip_dimension, histogram_summaries, scope):
     '''
     wavenet_block: many important convolution parameters (reuse, kernel_size
@@ -25,21 +25,12 @@ def wavenet_block(padded_x, x, conditioning, num_outputs, num_outputs2, rate,
 
     conv = layers.conv2d(
         padded_x, num_outputs=num_outputs2, rate=rate, kernel_size=kernel_size,
-        activation_fn=None, normalizer_params=None, scope=scope + '/conv')
-    delta = layers.conv2d(
-        conditioning, num_outputs=num_outputs2, rate=1, kernel_size=(1,),
-        activation_fn=None, normalizer_params=None,
-        biases_initializer=None, scope=scope + '/conv_conditioning')
-    conv = tf.nn.tanh(conv+delta)
+        activation_fn=tf.nn.tanh, normalizer_params=None, scope=scope + '/conv')
 
     gate = layers.conv2d(
         padded_x, num_outputs=num_outputs2, rate=rate, kernel_size=kernel_size,
-        activation_fn=None, normalizer_params=None, scope=scope + '/gate')
-    delta = layers.conv2d(
-        conditioning, num_outputs=num_outputs2, rate=1, kernel_size=(1,),
-        activation_fn=None, normalizer_params=None,
-        biases_initializer=None, scope=scope + '/gate_conditioning')
-    gate = tf.nn.sigmoid(gate+delta)
+        activation_fn=tf.nn.sigmoid, normalizer_params=None,
+        scope=scope + '/gate')
 
     with tf.name_scope(scope + '/prod'):
         out = conv * gate
@@ -144,11 +135,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     # in wavenet_block().
     with arg_scope([layers.conv2d], data_format=data_format,
                    reuse=reuse, padding='VALID', **normalizer_params):
+        inputs = tf.concat([inputs, conditioning], axis=2, name='input_p_cond')
 
-        delta = layers.conv2d(conditioning, num_outputs=opts.num_outputs,
-                              kernel_size=(1,), rate=1, activation_fn=None,
-                              biases_initializer=None,
-                              reuse=reuse, scope='input_conditioning')
         if opts.input_kernel_size > 1:
             inputs = padded(new_x=inputs, reuse=pad_reuse,
                             reverse=opts.reverse, pad=opts.input_kernel_size-1,
@@ -156,21 +144,22 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
                             scope='input_layer/pad'+extra_pad_scope)
         x = layers.conv2d(inputs, num_outputs=opts.num_outputs,
                           kernel_size=opts.input_kernel_size, rate=1,
-                          activation_fn=None, scope='input_layer')
-        x = tf.nn.tanh(x + delta)
+                          activation_fn=tf.nn.tanh, scope='input_layer')
 
         skip_connections = 0
         for i_block, block_dilations in enumerate(opts.dilations):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
+                xcond = tf.concat([x, conditioning], axis=2,
+                                   name=block_rate+'/x_concat')
                 padded_x = padded(
-                    new_x=x, pad=rate*(opts.kernel_size-1),
+                    new_x=xcond, pad=rate*(opts.kernel_size-1),
                     reuse=pad_reuse, n_chunks=opts.n_chunks,
                     reverse=opts.reverse, data_format=data_format,
                     scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavenet_block(
-                    padded_x, x, conditioning, opts.num_outputs,
+                    padded_x, x, opts.num_outputs,
                     opts.num_outputs2, rate, opts.kernel_size,
                     opts.skip_dimension, opts.histogram_summaries,
                     scope=block_rate)
