@@ -141,8 +141,6 @@ if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-    logits=wavenet_out[:, :-1, :], labels=encoded_batch[:, 1:]))
 loss = 0
 for i_future, future_out in enumerate(future_outs):
     if not opts.reverse:

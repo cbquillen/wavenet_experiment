@@ -12,8 +12,9 @@ from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_decode, mu_law_encode
 
 
-def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate,
-                  kernel_size, skip_dimension, histogram_summaries, scope):
+def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate, is_training,
+                  dropout, kernel_size, skip_dimension, histogram_summaries,
+                  scope):
     '''
     wavenet_block: many important convolution parameters (reuse, kernel_size
     etc.) come from the arg_scope() and are set by wavenet().
@@ -25,7 +26,8 @@ def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate,
 
     conv = layers.conv2d(
         padded_x, num_outputs=num_outputs2, rate=rate, kernel_size=kernel_size,
-        activation_fn=tf.nn.tanh, normalizer_params=None, scope=scope + '/conv')
+        activation_fn=tf.nn.tanh, normalizer_params=None,
+        scope=scope + '/conv')
 
     gate = layers.conv2d(
         padded_x, num_outputs=num_outputs2, rate=rate, kernel_size=kernel_size,
@@ -35,10 +37,13 @@ def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate,
     with tf.name_scope(scope + '/prod'):
         out = conv * gate
 
+    if dropout > 0:
+        out = layers.dropout(out, keep_prob=dropout,
+                             is_training=is_training, scope=scope + '/dropout')
+
     out = layers.conv2d(out, num_outputs=num_outputs, kernel_size=1,
                         activation_fn=None,
                         scope=scope + '/output_xform')
-
     with tf.name_scope(scope + '/residual'):
         residual = x + out
 
@@ -119,15 +124,16 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     # unpack inputs.
     inputs, user, alignment = inputs
 
-    user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
+#   user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
     alignment = tf.one_hot(alignment, depth=opts.n_phones,
                            name='align_onehot')
-    conditioning = tf.concat([user, alignment], axis=2, name='input_concat')
-    if 'cond_dim' in vars(opts):
-        conditioning = layers.conv2d(conditioning, num_outputs=opts.cond_dim,
-                                     kernel_size=(1,), rate=1,
-                                     activation_fn=None,
-                                     reuse=reuse, scope='cond_vec')
+#   conditioning = tf.concat([user, alignment], axis=3, name='input_concat')
+#   if 'cond_dim' in vars(opts):
+#        conditioning = layers.conv2d(conditioning, num_outputs=opts.cond_dim,
+#                                     kernel_size=(1,), rate=1,
+#                                     activation_fn=None,
+#                                     reuse=reuse, scope='cond_vec')
+    conditioning = alignment
     if data_format == 'NCW':
         conditioning = tf.transpose(conditioning, [0, 2, 1], name="cond_tr")
 
@@ -151,7 +157,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
                 xcond = tf.concat([x, conditioning], axis=2,
-                                   name=block_rate+'/x_concat')
+                                  name=block_rate+'/x_concat')
                 padded_x = padded(
                     new_x=xcond, pad=rate*(opts.kernel_size-1),
                     reuse=pad_reuse, n_chunks=opts.n_chunks,
@@ -160,8 +166,9 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
 
                 x, skip_connection = wavenet_block(
                     padded_x, x, opts.num_outputs,
-                    opts.num_outputs2, rate, opts.kernel_size,
-                    opts.skip_dimension, opts.histogram_summaries,
+                    opts.num_outputs2, rate, is_training,
+                    opts.dropout, opts.kernel_size, opts.skip_dimension,
+                    opts.histogram_summaries,
                     scope=block_rate)
 
                 with tf.name_scope(block_rate+"_skip".format(i_block, rate)):
