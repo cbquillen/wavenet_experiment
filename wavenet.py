@@ -25,7 +25,8 @@ def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate,
 
     conv = layers.conv2d(
         padded_x, num_outputs=num_outputs2, rate=rate, kernel_size=kernel_size,
-        activation_fn=tf.nn.tanh, normalizer_params=None, scope=scope + '/conv')
+        activation_fn=tf.nn.tanh, normalizer_params=None,
+        scope=scope + '/conv')
 
     gate = layers.conv2d(
         padded_x, num_outputs=num_outputs2, rate=rate, kernel_size=kernel_size,
@@ -117,19 +118,23 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         }
 
     # unpack inputs.
-    inputs, user, alignment = inputs
+    inputs, user, alignment, lf0 = inputs
 
-    user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
-    alignment = tf.one_hot(alignment, depth=opts.n_phones,
-                           name='align_onehot')
-    conditioning = tf.concat([user, alignment], axis=2, name='input_concat')
-    if 'cond_dim' in vars(opts):
-        conditioning = layers.conv2d(conditioning, num_outputs=opts.cond_dim,
-                                     kernel_size=(1,), rate=1,
-                                     activation_fn=None,
-                                     reuse=reuse, scope='cond_vec')
-    if data_format == 'NCW':
-        conditioning = tf.transpose(conditioning, [0, 2, 1], name="cond_tr")
+    with tf.variable_scope('conditioning'):
+        conditioning = tf.one_hot(alignment, depth=opts.n_phones,
+                                  name='align_onehot')
+        if user is not None:
+            user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
+            conditioning = tf.concat([user, conditioning], axis=2,
+                                     name='cat_user')
+        if 'cond_dim' in vars(opts):
+            conditioning = layers.conv2d(
+                conditioning, num_outputs=opts.cond_dim, kernel_size=(1,),
+                rate=1, activation_fn=None, reuse=reuse, scope='cond_vec')
+        lf0 = tf.reshape(lf0, (opts.n_chunks, -1, 1))
+        conditioning = tf.concat([conditioning, lf0], axis=2, name='cat_lf0')
+        if data_format == 'NCW':
+            conditioning = tf.transpose(conditioning, [0, 2, 1], name="tr")
 
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavenet_block().
@@ -151,7 +156,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
                 xcond = tf.concat([x, conditioning], axis=2,
-                                   name=block_rate+'/x_concat')
+                                  name=block_rate+'/x_concat')
                 padded_x = padded(
                     new_x=xcond, pad=rate*(opts.kernel_size-1),
                     reuse=pad_reuse, n_chunks=opts.n_chunks,

@@ -74,10 +74,14 @@ def align_iterator(input_alignments, sample_rate):
             path = a.pop(0)
             user_id = np.array(int(a.pop(0)), dtype=np.int32).reshape(1, 1)
             assert a.pop(0) == ':'
-            frame_labels = np.array(map(int, a), dtype=np.int32)
+            alen = (len(a) - 1)//2
+            frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
             frame_labels = frame_labels.repeat(sample_rate/100)
+            frame_lf0 = np.array(map(float, a[alen+1:]), dtype=np.float32)
+            frame_lf0 = frame_lf0.repeat(sample_rate/100)
             for i in xrange(frame_labels.shape[0]):
-                yield user_id, frame_labels[i:i+1].reshape(1, 1)
+                yield user_id, frame_labels[i:i+1].reshape(1, 1), \
+                    frame_lf0[i:i+1].reshape(1, 1)
 
 input_dim = opts.quantization_channels if opts.one_hot_input else 1
 prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)
@@ -85,10 +89,12 @@ last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 pUser = tf.placeholder(tf.int32, shape=(1, 1), name='user')
 pPhone = tf.placeholder(tf.int32, shape=(1, 1), name='phone')
+pLf0 = tf.placeholder(tf.float32, shape=(1, 1), name='lf0')
 
 with tf.name_scope("Generate"):
     # for zeroizing:
-    out, _ = wavenet([last_sample, pUser, pPhone], opts, is_training=False)
+    out, _ = wavenet([last_sample, pUser, pPhone, pLf0], opts,
+                     is_training=False)
     out = tf.nn.softmax(out)
 
     max_likeli_sample = tf.reshape(
@@ -113,13 +119,14 @@ if opts.initial_zeros > 0:
         zuser = tf.zeros((1, opts.initial_zeros), dtype=tf.int32)
         zalign = tf.constant(opts.silence_phone, shape=(1, opts.initial_zeros),
                              dtype=tf.int32)
+        zLf0 = tf.zeros((1, opts.initial_zeros), dtype=tf.float32)
         if opts.one_hot_input:
             zero = tf.constant(value=opts.quantization_channels/2,
                                shape=(1, opts.initial_zeros))
             zero = tf.one_hot(zero, depth=opts.quantization_channels)
         else:
             zero = tf.constant(value=0.0, shape=(1, opts.initial_zeros, 1))
-        zeroize, _ = wavenet([zero, zuser, zalign], opts,
+        zeroize, _ = wavenet([zero, zuser, zalign, zLf0], opts,
                              reuse=True, pad_reuse=True, is_training=False)
 
 # Finalize the graph, so that any new ops cannot be created.
@@ -142,15 +149,17 @@ if opts.initial_zeros > 0:
 samples = []
 
 last_time = time.time()
-for iUser, iPhone in align_iterator(opts.input_alignments, opts.sample_rate):
+for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
+                                          opts.sample_rate):
     output, prev_out = sess.run(
         fetches=[max_likeli_sample, out],
-        feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone})
+        feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,
+                   pLf0: iLf0})
     samples.append(output)
     if len(samples) % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(len(samples) + 1,
-                                                       new_time-last_time))
+                                                       new_time - last_time))
         last_time = new_time
 sess.close()
 

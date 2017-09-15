@@ -103,7 +103,8 @@ data.start_threads(sess)         # start data reader threads.
 
 # Define the computational graph.
 with tf.name_scope("input_massaging"):
-    batch, user, alignment, mfcc = data.dequeue(num_elements=opts.n_chunks)
+    batch, user, alignment, lf0, mfcc = \
+        data.dequeue(num_elements=opts.n_chunks)
 
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.
@@ -113,7 +114,7 @@ with tf.name_scope("input_massaging"):
     else:
         batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
-wavenet_out, omfcc = wavenet((batch, user, alignment), opts,
+wavenet_out, omfcc = wavenet((batch, user, alignment, lf0), opts,
                              is_training=opts.base_learning_rate > 0)
 future_outs = [wavenet_out]
 future_out = wavenet_out
@@ -127,7 +128,7 @@ for i in xrange(1, opts.which_future):
             next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
                                     shape=(opts.n_chunks, -1, 1))
             next_input = mu_law_decode(next_input, opts.quantization_channels)
-        future_out, _ = wavenet((next_input, user, alignment), opts,
+        future_out, _ = wavenet((next_input, user, alignment, lf0), opts,
                                 reuse=True, pad_reuse=False,
                                 extra_pad_scope=str(i),
                                 is_training=opts.base_learning_rate > 0)
