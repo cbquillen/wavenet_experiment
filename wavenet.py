@@ -13,8 +13,7 @@ from ops import mu_law_decode, mu_law_encode
 
 
 def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate, is_training,
-                  dropout, kernel_size, skip_dimension, histogram_summaries,
-                  scope):
+                  opts, scope):
     '''
     wavenet_block: many important convolution parameters (reuse, kernel_size
     etc.) come from the arg_scope() and are set by wavenet().
@@ -23,6 +22,10 @@ def wavenet_block(padded_x, x, num_outputs, num_outputs2, rate, is_training,
     input is padded and padding='VALID'. This causes samples to
     drop in the "right" way.
     '''
+
+    dropout, kernel_size, skip_dimension, histogram_summaries = (
+        opts.dropout, opts.kernel_size, opts.skip_dimension, 
+        opts.histogram_summaries)
 
     conv = layers.conv2d(
         padded_x, num_outputs=num_outputs2, rate=rate, kernel_size=kernel_size,
@@ -122,20 +125,23 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         }
 
     # unpack inputs.
-    inputs, user, alignment = inputs
+    inputs, user, alignment, lf0 = inputs
 
-#   user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
-    alignment = tf.one_hot(alignment, depth=opts.n_phones,
-                           name='align_onehot')
-#   conditioning = tf.concat([user, alignment], axis=3, name='input_concat')
-#   if 'cond_dim' in vars(opts):
-#        conditioning = layers.conv2d(conditioning, num_outputs=opts.cond_dim,
-#                                     kernel_size=(1,), rate=1,
-#                                     activation_fn=None,
-#                                     reuse=reuse, scope='cond_vec')
-    conditioning = alignment
-    if data_format == 'NCW':
-        conditioning = tf.transpose(conditioning, [0, 2, 1], name="cond_tr")
+    with tf.variable_scope('conditioning'):
+        conditioning = tf.one_hot(alignment, depth=opts.n_phones,
+                                  name='align_onehot')
+        if user is not None:
+            user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
+            conditioning = tf.concat([user, conditioning], axis=2,
+                                     name='cat_user')
+        if 'cond_dim' in vars(opts):
+            conditioning = layers.conv2d(
+                conditioning, num_outputs=opts.cond_dim, kernel_size=(1,),
+                rate=1, activation_fn=None, reuse=reuse, scope='cond_vec')
+        lf0 = tf.reshape(lf0, (opts.n_chunks, -1, 1))
+        conditioning = tf.concat([conditioning, lf0], axis=2, name='cat_lf0')
+        if data_format == 'NCW':
+            conditioning = tf.transpose(conditioning, [0, 2, 1], name="tr")
 
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavenet_block().
@@ -167,9 +173,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
                 x, skip_connection = wavenet_block(
                     padded_x, x, opts.num_outputs,
                     opts.num_outputs2, rate, is_training,
-                    opts.dropout, opts.kernel_size, opts.skip_dimension,
-                    opts.histogram_summaries,
-                    scope=block_rate)
+                    opts, scope=block_rate)
 
                 with tf.name_scope(block_rate+"_skip".format(i_block, rate)):
                     skip_connections += skip_connection
@@ -180,10 +184,10 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse,
                    data_format=data_format):
         x = layers.conv2d(
-            skip_connections, num_outputs=opts.quantization_channels,  # ?
+            skip_connections, num_outputs=opts.skip_dimension,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
         mfcc = layers.conv2d(
-            x, num_outputs=opts.quantization_channels,   # ?
+            x, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,
