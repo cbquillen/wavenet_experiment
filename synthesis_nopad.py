@@ -18,7 +18,7 @@ import tensorflow.contrib.layers as layers
 import librosa
 from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_encode, mu_law_decode
-from wavenet import wavenet, compute_overlap
+from wavenet import wavenet_unpadded, compute_overlap
 
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
@@ -34,6 +34,8 @@ parser.add_option('-o', '--output_file', dest='output_file',
 parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   action='store_true', default=False,
                   help='Do batch normalization')
+parser.add_option("-z", '--zeros', default=16000, dest='initial_zeros',
+                  type=int, help='Initial warm-up zero-buffer samples')
 parser.add_option("-c", '--cpu', default=False, dest='use_cpu',
                   action='store_true', help='Set to run on CPU.')
 
@@ -72,30 +74,41 @@ def align_iterator(input_alignments, sample_rate):
         for line in f:
             a = line.rstrip().split()
             path = a.pop(0)
-            user_id = np.array(int(a.pop(0)), dtype=np.int32).reshape(1, 1)
+            user_id = np.zeros((1, buf_size), dtype=np.int32) + int(a.pop(0))
             assert a.pop(0) == ':'
             alen = (len(a) - 1)//2
-            frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
-            frame_labels = frame_labels.repeat(sample_rate/100)
-            frame_lf0 = np.array(map(float, a[alen+1:]), dtype=np.float32)
-            frame_lf0 = frame_lf0.repeat(sample_rate/100)
-            for i in xrange(frame_labels.shape[0]):
-                yield user_id, frame_labels[i:i+1].reshape(1, 1), \
-                    frame_lf0[i:i+1].reshape(1, 1)
+            read_frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
+            read_frame_labels = read_frame_labels.repeat(sample_rate/100)
+            frame_labels = np.zeros((1, len(read_frame_labels)+buf_size-1),
+                                    dtype=np.int32)
+            frame_labels[:, 0:buf_size-1] = read_frame_labels[0]
+            frame_labels[:, buf_size-1:] = read_frame_labels[...]
+            read_frame_lf0 = np.array(map(float, a[alen+1:]), dtype=np.float32)
+            read_frame_lf0 = read_frame_lf0.repeat(sample_rate/100)
+            frame_lf0 = np.zeros((1, len(read_frame_labels)+buf_size-1),
+                                 dtype=np.float32)
+            frame_lf0[:, 0:buf_size-1] = read_frame_lf0[0]
+            frame_lf0[:, buf_size-1:] = read_frame_lf0[...]
 
+            for i in xrange(alen*sample_rate/100):
+                yield user_id, frame_labels[:, i:i+buf_size], \
+                    frame_lf0[:, i:i+buf_size]
+
+buf_size = compute_overlap(opts) + 1
+print("Context size is", buf_size-1)
 input_dim = opts.quantization_channels if opts.one_hot_input else 1
-prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)
-last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
-                             name='last_sample')
-pUser = tf.placeholder(tf.int32, shape=(1, 1), name='user')
+last_buf = np.zeros((1, buf_size, input_dim), dtype=np.float32)
+pLast = tf.placeholder(tf.float32, shape=(1, buf_size, input_dim),
+                       name='pLast')
+pUser = tf.placeholder(tf.int32, shape=(1, buf_size), name='user')
 user = pUser if opts.n_users > 1 else None
-pPhone = tf.placeholder(tf.int32, shape=(1, 1), name='phone')
-pLf0 = tf.placeholder(tf.float32, shape=(1, 1), name='lf0')
+pPhone = tf.placeholder(tf.int32, shape=(1, buf_size), name='phone')
+pLf0 = tf.placeholder(tf.float32, shape=(1, buf_size), name='lf0')
 
 with tf.name_scope("Generate"):
     # for zeroizing:
-    out, _ = wavenet([last_sample, user, pPhone, pLf0], opts,
-                     is_training=False)
+    out, _ = wavenet_unpadded([pLast, user, pPhone, pLf0], opts,
+                              is_training=False)
     out = tf.nn.softmax(out)
 
     max_likeli_sample = tf.reshape(
@@ -115,22 +128,6 @@ with tf.name_scope("Generate"):
 saver = tf.train.Saver(tf.trainable_variables())
 init = tf.global_variables_initializer()
 
-initial_zeros = compute_overlap(opts)
-with tf.name_scope("Zeroize_state"):
-    zuser = None if opts.n_users <= 1 else tf.zeros(
-        (1, initial_zeros), dtype=tf.int32)
-    zalign = tf.constant(opts.silence_phone, shape=(1, initial_zeros),
-                         dtype=tf.int32)
-    zLf0 = tf.zeros((1, initial_zeros), dtype=tf.float32)
-    if opts.one_hot_input:
-        zero = tf.constant(value=opts.quantization_channels/2,
-                           shape=(1, initial_zeros))
-        zero = tf.one_hot(zero, depth=opts.quantization_channels)
-    else:
-        zero = tf.constant(value=0.0, shape=(1, initial_zeros, 1))
-    zeroize, _ = wavenet([zero, zuser, zalign, zLf0], opts,
-                         reuse=True, pad_reuse=True, is_training=False)
-
 # Finalize the graph, so that any new ops cannot be created.
 # this is good for avoiding memory leaks.
 tf.get_default_graph().finalize()
@@ -145,20 +142,19 @@ sess.run(init)
 
 print("Restoring from", opts.input_file)
 saver.restore(sess, opts.input_file)
-print("Zeroizing state")
-sess.run(zeroize)
-print("Starting generation")
 
 samples = []
 
 last_time = time.time()
 for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
                                           opts.sample_rate):
-    output, prev_out = sess.run(
+    output, new_in = sess.run(
         fetches=[max_likeli_sample, out],
-        feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,
+        feed_dict={pLast: last_buf, pUser: iUser, pPhone: iPhone,
                    pLf0: iLf0})
     samples.append(output)
+    last_buf[:, 0:buf_size-1, :] = last_buf[:, 1:buf_size, :]
+    last_buf[:, buf_size-1, :] = new_in[...]
     if len(samples) % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(len(samples) + 1,

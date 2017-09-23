@@ -17,7 +17,7 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from audio_reader import AudioReader
 from ops import mu_law_encode, mu_law_decode
-from wavenet import wavenet
+from wavenet import wavenet, wavenet_unpadded, compute_overlap
 
 # Options from the command line:
 parser = optparse.OptionParser()
@@ -78,6 +78,7 @@ opts.n_phones = 183
 opts.n_users = 98
 opts.n_mfcc = 12
 opts.mfcc_weight = 0.001
+opts.nopad = False      # True to use training without the padding method.
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -91,8 +92,16 @@ opts.canonical_epoch_size *= 100000.0/(opts.audio_chunk_size*opts.n_chunks)
 sess = tf.Session()
 
 coord = tf.train.Coordinator()  # Is this used for anything?
+
+if opts.nopad:
+    overlap = compute_overlap(opts)
+    wavenet = wavenet_unpadded
+else:
+    overlap = 0
+
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
-                   chunk_size=opts.audio_chunk_size, reverse=False,
+                   chunk_size=opts.audio_chunk_size,
+                   overlap=overlap, reverse=False,
                    silence_threshold=opts.silence_threshold,
                    n_chunks=opts.n_chunks, queue_size=opts.n_chunks,
                    n_mfcc=opts.n_mfcc)
@@ -131,10 +140,10 @@ for i in xrange(1, opts.which_future):
             next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
                                     shape=(opts.n_chunks, -1, 1))
             next_input = mu_law_decode(next_input, opts.quantization_channels)
-        future_out, _ = wavenet((next_input, user, alignment, lf0), opts,
-                                reuse=True, pad_reuse=False,
-                                extra_pad_scope=str(i),
-                                is_training=opts.base_learning_rate > 0)
+        future_out, _ = wavenet_unpadded(
+            (next_input, user, alignment, lf0), opts, reuse=True,
+            pad_reuse=False, extra_pad_scope=str(i),
+            is_training=opts.base_learning_rate > 0)
     future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
@@ -150,11 +159,11 @@ for i_future, future_out in enumerate(future_outs):
     if not opts.reverse:
         loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits=future_out[:, :-(i_future+1), :],
-            labels=encoded_batch[:, i_future+1:]))
+            labels=encoded_batch[:, overlap+i_future+1:]))
     else:
         loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits=future_out[:, i_future+1:, :],
-            labels=encoded_batch[:, :-(i_future+1)]))
+            labels=encoded_batch[:, :-(overlap+i_future+1)]))
 
 loss /= opts.which_future
 
@@ -162,7 +171,7 @@ tf.summary.scalar(name="loss", tensor=loss)
 
 mfcc_loss = tf.constant(0.0)
 if opts.mfcc_weight > 0:
-    del_mfcc = mfcc-omfcc
+    del_mfcc = mfcc[:, overlap:, :]-omfcc
     mfcc_loss = tf.reduce_mean(del_mfcc*del_mfcc)
 
     tf.summary.scalar(name='mfcc', tensor=mfcc_loss)

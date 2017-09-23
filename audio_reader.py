@@ -8,10 +8,11 @@ import tensorflow as tf
 
 
 def load_audio_alignments(alignment_list_file, sample_rate):
-    '''L:oad the audio waveforms and alignments from a list file.
+    '''Load the audio waveforms and alignments from a list file.
        The file format is
-       wav_path user_# : phone#_1 phone#_2 ... phone#_N
-       where phone#_t* ints are per-frame phone labels at 100 frames/second.
+       wav_path user_# : phone#_1 ... phone#_N : log_f0_1 .. log_f0_N
+       where phone#_t* ints are per-frame phone labels at 100 frames/second
+       and log_f0_* are per-frame log-f0 values.
     '''
     assert sample_rate % 100 == 0        # We'll need this.
 
@@ -50,6 +51,7 @@ def audio_iterator(files, alignments, sample_rate, n_mfcc):
         for filename in files:
             user_id, frame_labels, frame_lf0 = alignments[filename]
             audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
+            # normalize audio
             maxv = np.max(np.abs(audio))
             if maxv > 1e-5:
                 audio *= 1.0/maxv
@@ -97,14 +99,18 @@ class AudioReader(object):
     and enqueues them into a TensorFlow queue.'''
 
     def __init__(self, alignment_list_file, coord, sample_rate,
-                 chunk_size, reverse=False, silence_threshold=None,
+                 chunk_size, overlap=0, reverse=False, silence_threshold=None,
                  n_chunks=5, queue_size=5, n_mfcc=12):
+
+        assert chunk_size > overlap
+
         self.coord = coord
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
         self.reverse = reverse
         self.silence_threshold = silence_threshold
         self.n_chunks = n_chunks
+        self.overlap = overlap
         self.n_mfcc = n_mfcc
         self.threads = []
         self.sample_placeholder = tf.placeholder(dtype=tf.float32, shape=None)
@@ -148,6 +154,11 @@ class AudioReader(object):
         # through the data set multiple times.
         iterator = audio_iterator(self.files, self.alignments,
                                   self.sample_rate, self.n_mfcc)
+
+        # Inflate chunk_size by the amount of overlap for convenience:
+        orig_chunk_size = self.chunk_size
+        padded_chunk_size = orig_chunk_size + self.overlap
+
         stop = False
         while not stop:
             # The buffers array has 3 elements per entry:
@@ -164,7 +175,7 @@ class AudioReader(object):
                 # Cut samples into fixed size pieces.
                 # top up the current buffers[i] element if it
                 # is too short.
-                while len(buffer_) < self.chunk_size:
+                while len(buffer_) < padded_chunk_size:
                     filename, audio, user, alignment, lf0, mfcc = \
                         iterator.next()
                     if self.silence_threshold is not None:
@@ -194,27 +205,27 @@ class AudioReader(object):
 
                 # Send one piece
                 if not self.reverse:
-                    piece = buffer_[:self.chunk_size]
-                    piece_user = buf_user[:self.chunk_size]
-                    piece_align = buf_align[:self.chunk_size]
-                    piece_lf0 = buf_lf0[:self.chunk_size]
-                    piece_mfcc = buf_mfcc[:, :self.chunk_size]
-                    buffer_ = buffer_[self.chunk_size:]
-                    buf_user = buf_user[self.chunk_size:]
-                    buf_align = buf_align[self.chunk_size:]
-                    buf_lf0 = buf_lf0[self.chunk_size:]
-                    buf_mfcc = buf_mfcc[:, self.chunk_size:]
+                    piece = buffer_[:padded_chunk_size]
+                    piece_user = buf_user[:padded_chunk_size]
+                    piece_align = buf_align[:padded_chunk_size]
+                    piece_lf0 = buf_lf0[:padded_chunk_size]
+                    piece_mfcc = buf_mfcc[:, :padded_chunk_size]
+                    buffer_ = buffer_[orig_chunk_size:]
+                    buf_user = buf_user[orig_chunk_size:]
+                    buf_align = buf_align[orig_chunk_size:]
+                    buf_lf0 = buf_lf0[orig_chunk_size:]
+                    buf_mfcc = buf_mfcc[:, orig_chunk_size:]
                 else:
-                    piece = buffer_[-self.chunk_size:]
-                    piece_user = buf_user[-self.chunk_size:]
-                    piece_align = buf_align[-self.chunk_size:]
-                    piece_lf0 = buf_lf0[-self.chunk_size:]
-                    piece_mfcc = buf_mfcc[:, -self.chunk_size:]
-                    buffer_ = buffer_[:-self.chunk_size]
-                    buf_user = buf_user[:-self.chunk_size]
-                    buf_align = buf_align[:-self.chunk_size]
-                    buf_lf0 = buf_lf0[:-self.chunk_size]
-                    buf_mfcc = buf_mfcc[:, :-self.chunk_size]
+                    piece = buffer_[-padded_chunk_size:]
+                    piece_user = buf_user[-padded_chunk_size:]
+                    piece_align = buf_align[-padded_chunk_size:]
+                    piece_lf0 = buf_lf0[-padded_chunk_size:]
+                    piece_mfcc = buf_mfcc[:, -padded_chunk_size:]
+                    buffer_ = buffer_[:-orig_chunk_size]
+                    buf_user = buf_user[:-orig_chunk_size]
+                    buf_align = buf_align[:-orig_chunk_size]
+                    buf_lf0 = buf_lf0[:-orig_chunk_size]
+                    buf_mfcc = buf_mfcc[:, :-orig_chunk_size]
                 sess.run(
                     self.enqueue,
                     feed_dict={self.sample_placeholder: piece,
