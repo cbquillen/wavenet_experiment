@@ -129,6 +129,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     with tf.variable_scope('conditioning'):
         conditioning = tf.one_hot(alignment, depth=opts.n_phones,
                                   name='align_onehot')
+        conditioning = tf.reshape(
+            conditioning, (opts.n_chunks, -1, opts.n_phones*2))
         if user is not None:
             user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
             conditioning = tf.concat([user, conditioning], axis=2,
@@ -228,6 +230,8 @@ def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
     with tf.variable_scope('conditioning'):
         conditioning = tf.one_hot(alignment, depth=opts.n_phones,
                                   name='align_onehot')
+        conditioning = tf.reshape(
+            conditioning, (opts.n_chunks, -1, opts.n_phones*2))
         if user is not None:
             user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
             conditioning = tf.concat([user, conditioning], axis=2,

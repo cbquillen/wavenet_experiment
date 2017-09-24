@@ -19,6 +19,7 @@ import librosa
 from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet_unpadded, compute_overlap
+from audio_reader import biphone
 
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
@@ -77,22 +78,24 @@ def align_iterator(input_alignments, sample_rate):
             user_id = np.zeros((1, buf_size), dtype=np.int32) + int(a.pop(0))
             assert a.pop(0) == ':'
             alen = (len(a) - 1)//2
-            read_frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
-            read_frame_labels = read_frame_labels.repeat(sample_rate/100)
-            frame_labels = np.zeros((1, len(read_frame_labels)+buf_size-1),
-                                    dtype=np.int32)
-            frame_labels[:, 0:buf_size-1] = read_frame_labels[0]
-            frame_labels[:, buf_size-1:] = read_frame_labels[...]
+            frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
+            repeat_factor = sample_rate/100
+            read_sample_labels = biphone(frame_labels).repeat(repeat_factor,
+                                                              axis=0)
+            n_samples = read_sample_labels.shape[0]  # == alen*repeat_factor
+            sample_labels = np.zeros(
+                (1, n_samples+buf_size-1, 2), dtype=np.int32)
+            sample_labels[:, 0:buf_size-1, :] = read_sample_labels[0, :]
+            sample_labels[:, buf_size-1:, :] = read_sample_labels[...]
             read_frame_lf0 = np.array(map(float, a[alen+1:]), dtype=np.float32)
-            read_frame_lf0 = read_frame_lf0.repeat(sample_rate/100)
-            frame_lf0 = np.zeros((1, len(read_frame_labels)+buf_size-1),
-                                 dtype=np.float32)
-            frame_lf0[:, 0:buf_size-1] = read_frame_lf0[0]
-            frame_lf0[:, buf_size-1:] = read_frame_lf0[...]
+            read_frame_lf0 = read_frame_lf0.repeat(repeat_factor)
+            sample_lf0 = np.zeros((1, n_samples+buf_size-1), dtype=np.float32)
+            sample_lf0[:, 0:buf_size-1] = read_frame_lf0[0]
+            sample_lf0[:, buf_size-1:] = read_frame_lf0[...]
 
-            for i in xrange(alen*sample_rate/100):
-                yield user_id, frame_labels[:, i:i+buf_size], \
-                    frame_lf0[:, i:i+buf_size]
+            for i in xrange(n_samples):
+                yield user_id, sample_labels[:, i:i+buf_size, :], \
+                    sample_lf0[:, i:i+buf_size]
 
 buf_size = compute_overlap(opts) + 1
 print("Context size is", buf_size-1)
@@ -102,7 +105,7 @@ pLast = tf.placeholder(tf.float32, shape=(1, buf_size, input_dim),
                        name='pLast')
 pUser = tf.placeholder(tf.int32, shape=(1, buf_size), name='user')
 user = pUser if opts.n_users > 1 else None
-pPhone = tf.placeholder(tf.int32, shape=(1, buf_size), name='phone')
+pPhone = tf.placeholder(tf.int32, shape=(1, buf_size, 2), name='phone')
 pLf0 = tf.placeholder(tf.float32, shape=(1, buf_size), name='lf0')
 
 with tf.name_scope("Generate"):

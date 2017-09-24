@@ -42,6 +42,11 @@ def load_audio_alignments(alignment_list_file, sample_rate):
     return files, alignments, iuser, iphone
 
 
+def biphone(labels):
+    return np.append(labels, np.append(labels[1:], labels[-1])
+                     ).reshape(2, -1).transpose()
+
+
 # Never finishes.
 def audio_iterator(files, alignments, sample_rate, n_mfcc):
     epoch = 0
@@ -56,16 +61,16 @@ def audio_iterator(files, alignments, sample_rate, n_mfcc):
             if maxv > 1e-5:
                 audio *= 1.0/maxv
             repeat_factor = sample_rate/100
-            sample_labels = frame_labels.repeat(repeat_factor)
+            sample_labels = biphone(frame_labels).repeat(repeat_factor, axis=0)
             sample_lf0 = frame_lf0.repeat(repeat_factor)
             audio = audio[:sample_labels.shape[0]]  # clip off the excess.
             user = np.full((sample_labels.shape[0],), user_id, dtype=np.int32)
             mfcc = librosa.feature.mfcc(
                 audio[:-1], sr=sample_rate, n_mfcc=n_mfcc,
-                hop_length=repeat_factor, n_fft=400)
-            mfcc = mfcc.repeat(repeat_factor, axis=1)
+                hop_length=repeat_factor, n_fft=400).transpose()
+            mfcc = mfcc.repeat(repeat_factor, axis=0)
             assert len(audio) == len(sample_labels) == len(user) == \
-                mfcc.shape[1]
+                mfcc.shape[0]
             yield filename, audio, user, sample_labels, sample_lf0, mfcc
 
         print "Epoch {} ended".format(epoch)
@@ -82,15 +87,15 @@ def trim_silence(audio, user, alignment, lf0, mfcc, threshold):
     if indices.size:
         audio = audio[indices[0]:indices[-1]]
         user = user[indices[0]:indices[-1]]
-        alignment = alignment[indices[0]:indices[-1]]
+        alignment = alignment[indices[0]:indices[-1], :]
         lf0 = lf0[indices[0]:indices[-1]]
-        mfcc = mfcc[:, indices[0]:indices[-1]]
+        mfcc = mfcc[indices[0]:indices[-1], :]
     else:
         audio = audio[0:0]
         user = user[0:0]
-        alignment = alignment[0:0]
+        alignment = alignment[0:0, :]
         lf0 = lf0[0:0]
-        mfcc = mfcc[:, 0:0]
+        mfcc = mfcc[0:0, :]
     return audio, user, alignment, lf0, mfcc
 
 
@@ -121,7 +126,7 @@ class AudioReader(object):
         self.queue = tf.PaddingFIFOQueue(
             queue_size,
             ['float32', 'int32', 'int32', 'float32', 'float32'],
-            shapes=[(None,), (None,), (None,), (None,), (None, self.n_mfcc)])
+            shapes=[(None,), (None,), (None, 2), (None,), (None, self.n_mfcc)])
         self.enqueue = self.queue.enqueue([self.sample_placeholder,
                                            self.user_placeholder,
                                            self.align_placeholder,
@@ -146,9 +151,9 @@ class AudioReader(object):
         # buffers: the array of buffers.
         buffers = [(np.array([], dtype=np.float32),
                     np.array([], dtype=np.int32),
-                    np.array([], dtype=np.int32),
+                    np.array([], dtype=np.int32).reshape(0, 2),
                     np.array([], dtype=np.float32),
-                    np.array([], dtype=np.float32).reshape(self.n_mfcc, 0)
+                    np.array([], dtype=np.float32).reshape(0, self.n_mfcc)
                     )]*self.n_chunks
         # iterator.next() will never stop.  It will allow us to go
         # through the data set multiple times.
@@ -169,8 +174,8 @@ class AudioReader(object):
                     stop = True
                     break
 
-                assert len(buffer_) == len(buf_user) == len(buf_align) == \
-                    len(buf_lf0) == buf_mfcc.shape[1]
+                assert len(buffer_) == len(buf_user) == buf_align.shape[0] == \
+                    len(buf_lf0) == buf_mfcc.shape[0]
 
                 # Cut samples into fixed size pieces.
                 # top up the current buffers[i] element if it
@@ -193,46 +198,46 @@ class AudioReader(object):
                     if not self.reverse:
                         buffer_ = np.append(buffer_, audio)
                         buf_user = np.append(buf_user, user)
-                        buf_align = np.append(buf_align, alignment)
+                        buf_align = np.append(buf_align, alignment, axis=0)
                         buf_lf0 = np.append(buf_lf0, lf0)
-                        buf_mfcc = np.append(buf_mfcc, mfcc, axis=1)
+                        buf_mfcc = np.append(buf_mfcc, mfcc, axis=0)
                     else:
                         buffer_ = np.append(audio, buffer_)
                         buf_user = np.append(user, buf_user)
-                        buf_align = np.append(alignment, buf_align)
+                        buf_align = np.append(alignment, buf_align, axis=0)
                         buf_lf0 = np.append(lf0, buf_lf0)
-                        buf_mfcc = np.append(mfcc, buf_mfcc, axis=1)
+                        buf_mfcc = np.append(mfcc, buf_mfcc, axis=0)
 
                 # Send one piece
                 if not self.reverse:
                     piece = buffer_[:padded_chunk_size]
                     piece_user = buf_user[:padded_chunk_size]
-                    piece_align = buf_align[:padded_chunk_size]
+                    piece_align = buf_align[:padded_chunk_size, :]
                     piece_lf0 = buf_lf0[:padded_chunk_size]
-                    piece_mfcc = buf_mfcc[:, :padded_chunk_size]
+                    piece_mfcc = buf_mfcc[:padded_chunk_size, :]
                     buffer_ = buffer_[orig_chunk_size:]
                     buf_user = buf_user[orig_chunk_size:]
-                    buf_align = buf_align[orig_chunk_size:]
+                    buf_align = buf_align[orig_chunk_size:, :]
                     buf_lf0 = buf_lf0[orig_chunk_size:]
-                    buf_mfcc = buf_mfcc[:, orig_chunk_size:]
+                    buf_mfcc = buf_mfcc[orig_chunk_size:, :]
                 else:
                     piece = buffer_[-padded_chunk_size:]
                     piece_user = buf_user[-padded_chunk_size:]
-                    piece_align = buf_align[-padded_chunk_size:]
+                    piece_align = buf_align[-padded_chunk_size:, :]
                     piece_lf0 = buf_lf0[-padded_chunk_size:]
-                    piece_mfcc = buf_mfcc[:, -padded_chunk_size:]
+                    piece_mfcc = buf_mfcc[-padded_chunk_size:, :]
                     buffer_ = buffer_[:-orig_chunk_size]
                     buf_user = buf_user[:-orig_chunk_size]
-                    buf_align = buf_align[:-orig_chunk_size]
+                    buf_align = buf_align[:-orig_chunk_size, :]
                     buf_lf0 = buf_lf0[:-orig_chunk_size]
-                    buf_mfcc = buf_mfcc[:, :-orig_chunk_size]
+                    buf_mfcc = buf_mfcc[:-orig_chunk_size, :]
                 sess.run(
                     self.enqueue,
                     feed_dict={self.sample_placeholder: piece,
                                self.user_placeholder: piece_user,
                                self.align_placeholder: piece_align,
                                self.lf0_placeholder: piece_lf0,
-                               self.mfcc_placeholder: piece_mfcc.transpose()})
+                               self.mfcc_placeholder: piece_mfcc})
                 buffers[i] = (buffer_, buf_user, buf_align, buf_lf0, buf_mfcc)
 
     def start_threads(self, sess, n_threads=1):
