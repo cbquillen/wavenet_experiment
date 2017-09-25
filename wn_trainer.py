@@ -154,27 +154,35 @@ if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-loss = 0
-for i_future, future_out in enumerate(future_outs):
-    if not opts.reverse:
-        loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits=future_out[:, :-(i_future+1), :],
-            labels=encoded_batch[:, overlap+i_future+1:]))
-    else:
-        loss += tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits=future_out[:, i_future+1:, :],
-            labels=encoded_batch[:, :-(overlap+i_future+1)]))
+loss = reg_loss = 0
+with tf.name_scope("loss"):
+    for i_future, future_out in enumerate(future_outs):
+        if not opts.reverse:
+            loss += tf.reduce_mean(
+                tf.nn.sparse_softmax_cross_entropy_with_logits(
+                    logits=future_out[:, :-(i_future+1), :],
+                    labels=encoded_batch[:, overlap+i_future+1:]))
+        else:
+            loss += tf.reduce_mean(
+                tf.nn.sparse_softmax_cross_entropy_with_logits(
+                    logits=future_out[:, i_future+1:, :],
+                    labels=encoded_batch[:, :-(overlap+i_future+1)]))
 
-loss /= opts.which_future
+    loss /= opts.which_future
 
 tf.summary.scalar(name="loss", tensor=loss)
 
-mfcc_loss = tf.constant(0.0)
-if opts.mfcc_weight > 0:
-    del_mfcc = mfcc[:, overlap:, :]-omfcc
-    mfcc_loss = tf.reduce_mean(del_mfcc*del_mfcc)
+with tf.name_scope("mfcc_loss"):
+    mfcc_loss = tf.constant(0.0)
+    if opts.mfcc_weight > 0:
+        del_mfcc = mfcc[:, overlap:, :]-omfcc
+        mfcc_loss = tf.reduce_mean(del_mfcc*del_mfcc)
 
-    tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
+        tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
+
+with tf.name_scope("reg_loss"):
+    if 'l2reg' in vars(opts):
+        reg_loss = sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
 
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
@@ -188,7 +196,7 @@ if opts.base_learning_rate > 0:
                                        epsilon=adams_epsilon)
     if opts.clip is not None:
         gradients = optimizer.compute_gradients(
-            loss + opts.mfcc_weight*mfcc_loss,
+            loss + opts.mfcc_weight*mfcc_loss + reg_loss,
             var_list=tf.trainable_variables())
         clipped_gradients = [(tf.clip_by_value(var, -opts.clip, opts.clip),
                               name) for var, name in gradients]

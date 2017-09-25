@@ -123,6 +123,9 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             }
         }
 
+    l2reg = None
+    if 'l2reg' in vars(opts):
+        l2reg = tf.contrib.layers.l2_regularizer(opts.l2reg)
     # unpack inputs.
     inputs, user, alignment, lf0 = inputs
 
@@ -147,7 +150,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavenet_block().
     with arg_scope([layers.conv2d], data_format=data_format,
-                   reuse=reuse, padding='VALID', **normalizer_params):
+                   reuse=reuse, padding='VALID', weights_regularizer=l2reg,
+                   **normalizer_params):
         inputs = tf.concat([inputs, conditioning], axis=2, name='input_p_cond')
 
         if opts.input_kernel_size > 1:
@@ -224,6 +228,9 @@ def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
 
     overlap = compute_overlap(opts)
 
+    l2reg = None
+    if 'l2reg' in vars(opts):
+        l2reg = tf.contrib.layers.l2_regularizer(opts.l2reg)
     # unpack inputs.
     inputs, user, alignment, lf0 = inputs
 
@@ -247,7 +254,8 @@ def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
     # in wavenet_block().
     cond_offset = 0
     with arg_scope([layers.conv2d], data_format=data_format,
-                   reuse=reuse, padding='VALID', **normalizer_params):
+                   reuse=reuse, padding='VALID', weights_regularizer=l2reg,
+                   **normalizer_params):
         inputs = tf.concat([inputs, conditioning], axis=2, name='input_p_cond')
 
         x = layers.conv2d(inputs, num_outputs=opts.num_outputs,
