@@ -12,7 +12,7 @@ from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_decode, mu_law_encode
 
 
-def wavenet_block(xcond, x, num_outputs, num_outputs2, rate,
+def wavenet_block(xpad, x, conditioning, num_outputs, num_outputs2, rate,
                   is_training, opts, scope):
     '''
     wavenet_block: many important convolution parameters (reuse, kernel_size
@@ -28,9 +28,13 @@ def wavenet_block(xcond, x, num_outputs, num_outputs2, rate,
         opts.histogram_summaries)
 
     conv_gate = layers.conv2d(
-        xcond, num_outputs=num_outputs2*2, rate=rate, kernel_size=kernel_size,
-        activation_fn=None, normalizer_params=None,
-        scope=scope + '/conv_gate')
+        xpad, num_outputs=num_outputs2*2, rate=rate, kernel_size=kernel_size,
+        activation_fn=None, normalizer_params=None, scope=scope + '/conv_gate')
+
+    # Add the conditioning.
+    conv_gate += layers.conv2d(
+        conditioning, num_outputs=num_outputs2*2, rate=rate, kernel_size=1,
+        activation_fn=None, normalizer_params=None, scope=scope + '/cur_cond')
 
     with tf.name_scope(scope + '/activation'):
         conv = tf.nn.tanh(conv_gate[:, :, :num_outputs2], name='conv')
@@ -152,8 +156,6 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     with arg_scope([layers.conv2d], data_format=data_format,
                    reuse=reuse, padding='VALID', weights_regularizer=l2reg,
                    **normalizer_params):
-        inputs = tf.concat([inputs, conditioning], axis=2, name='input_p_cond')
-
         if opts.input_kernel_size > 1:
             inputs = padded(new_x=inputs, reuse=pad_reuse,
                             reverse=opts.reverse, pad=opts.input_kernel_size-1,
@@ -167,16 +169,14 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         for i_block, block_dilations in enumerate(opts.dilations):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
-                xcond = tf.concat([x, conditioning], axis=2,
-                                  name=block_rate+'/x_concat')
-                xcond = padded(
-                    new_x=xcond, pad=rate*(opts.kernel_size-1),
+                xpad = padded(
+                    new_x=x, pad=rate*(opts.kernel_size-1),
                     reuse=pad_reuse, n_chunks=opts.n_chunks,
                     reverse=opts.reverse, data_format=data_format,
                     scope=block_rate+"/pad"+extra_pad_scope)
 
                 x, skip_connection = wavenet_block(
-                    xcond, x, opts.num_outputs,
+                    xpad, x, conditioning, opts.num_outputs,
                     opts.num_outputs2, rate, is_training,
                     opts, scope=block_rate)
 
@@ -252,30 +252,27 @@ def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
 
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavenet_block().
-    cond_offset = 0
     with arg_scope([layers.conv2d], data_format=data_format,
                    reuse=reuse, padding='VALID', weights_regularizer=l2reg,
                    **normalizer_params):
-        inputs = tf.concat([inputs, conditioning], axis=2, name='input_p_cond')
 
         x = layers.conv2d(inputs, num_outputs=opts.num_outputs,
                           kernel_size=opts.input_kernel_size, rate=1,
                           activation_fn=tf.nn.tanh, scope='input_layer')
-        cond_offset += opts.input_kernel_size-1
+        cond_offset = opts.input_kernel_size-1
 
         skip_connections = 0
         for i_block, block_dilations in enumerate(opts.dilations):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
-                xcond = tf.concat([x, conditioning[:, cond_offset:, :]],
-                                  axis=2, name=block_rate+'/x_concat')
 
                 samples_lost = rate*(opts.kernel_size-1)
-                x, skip_connection = wavenet_block(
-                    xcond, x[:, samples_lost:, :], opts.num_outputs,
-                    opts.num_outputs2, rate, is_training,
-                    opts, scope=block_rate)
                 cond_offset += samples_lost
+                x, skip_connection = wavenet_block(
+                    x, x[:, samples_lost:, :],
+                    conditioning[:, cond_offset:, :],
+                    opts.num_outputs, opts.num_outputs2, rate, is_training,
+                    opts, scope=block_rate)
 
                 with tf.name_scope(block_rate+"_skip".format(i_block, rate)):
                     skip_connections += skip_connection[
