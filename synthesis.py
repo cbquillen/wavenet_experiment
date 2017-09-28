@@ -19,7 +19,7 @@ import librosa
 from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet, compute_overlap
-from audio_reader import biphone
+from audio_reader import biphone, triphone
 
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
@@ -47,6 +47,7 @@ opts.user_dim = 10    # User vector dimension to use.
 opts.n_phones = 183
 opts.n_users = 98
 opts.n_mfcc = 12
+opts.context = 3
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
@@ -78,12 +79,20 @@ def align_iterator(input_alignments, sample_rate):
             alen = (len(a) - 1)//2
             frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
             repeat_factor = sample_rate/100
-            sample_labels = biphone(frame_labels).repeat(repeat_factor, axis=0)
+            if opts.context == 2:
+                sample_labels = biphone(frame_labels).repeat(
+                    repeat_factor, axis=0)
+            elif opts.context == 3:
+                sample_labels = triphone(frame_labels).repeat(
+                    repeat_factor, axis=0)
+            else:
+                sample_labels = frame_labels.repeat(
+                    repeat_factor, axis=0).reshape(1, -1)
             frame_lf0 = np.array(map(float, a[alen+1:]), dtype=np.float32)
             sample_lf0 = frame_lf0.repeat(repeat_factor)
             for i in xrange(sample_labels.shape[0]):
-                yield user_id, sample_labels[i:i+1, :].reshape(1, 2), \
-                    sample_lf0[i:i+1].reshape(1, 1)
+                yield user_id, sample_labels[i:i+1, :].reshape(
+                    1, opts.context), sample_lf0[i:i+1].reshape(1, 1)
 
 input_dim = opts.quantization_channels if opts.one_hot_input else 1
 prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)
@@ -91,7 +100,7 @@ last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 pUser = tf.placeholder(tf.int32, shape=(1, 1), name='user')
 user = pUser if opts.n_users > 1 else None
-pPhone = tf.placeholder(tf.int32, shape=(1, 2), name='phone')
+pPhone = tf.placeholder(tf.int32, shape=(1, opts.context), name='phone')
 pLf0 = tf.placeholder(tf.float32, shape=(1, 1), name='lf0')
 
 with tf.name_scope("Generate"):
@@ -121,8 +130,8 @@ initial_zeros = compute_overlap(opts)
 with tf.name_scope("Zeroize_state"):
     zuser = None if opts.n_users <= 1 else tf.zeros(
         (1, initial_zeros), dtype=tf.int32)
-    zalign = tf.constant(opts.silence_phone, shape=(1, initial_zeros, 2),
-                         dtype=tf.int32)
+    zalign = tf.constant(opts.silence_phone, dtype=tf.int32,
+                         shape=(1, initial_zeros, opts.context))
     zLf0 = tf.zeros((1, initial_zeros), dtype=tf.float32)
     if opts.one_hot_input:
         zero = tf.constant(value=opts.quantization_channels/2,
