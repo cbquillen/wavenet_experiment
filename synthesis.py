@@ -44,9 +44,9 @@ opts.histogram_summaries = False
 opts.reverse = False
 opts.silence_phone = 0
 opts.user_dim = 10    # User vector dimension to use.
-opts.n_phones = 183
-opts.n_users = 98
-opts.n_mfcc = 12
+opts.n_phones = 41
+opts.n_users = 1
+opts.n_mfcc = 20
 opts.context = 3
 
 # Further options *must* come from a parameter file.

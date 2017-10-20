@@ -171,7 +171,7 @@ with tf.name_scope("loss"):
                                 depth=opts.n_users)
             g_xent = tf.reduce_sum(
                 tf.reshape(xent, (opts.n_chunks, -1, 1))*g_user, axis=[0, 1])
-            uloss = tf.assign_add(uloss, g_xent)/ \
+            uloss = tf.assign_add(uloss, g_xent) / \
                 tf.assign_add(usum, tf.reduce_sum(g_user, axis=[0, 1]))
         else:
             loss += tf.reduce_mean(
@@ -248,7 +248,7 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
         saver.save(sess, opts.output_file, global_step)
 
     sys.stdout.flush()
-    #print(cur_uloss)
+    # print(cur_uloss)
 
 print(cur_uloss)
 
