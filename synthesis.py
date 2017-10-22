@@ -19,7 +19,6 @@ import librosa
 from tensorflow.contrib.framework import arg_scope
 from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet, compute_overlap
-from audio_reader import biphone, triphone
 
 parser = optparse.OptionParser()
 parser.add_option('-p', '--param_file', dest='param_file',
@@ -43,11 +42,10 @@ opts, cmdline_args = parser.parse_args()
 opts.histogram_summaries = False
 opts.reverse = False
 opts.silence_phone = 0
-opts.user_dim = 10    # User vector dimension to use.
 opts.n_phones = 41
 opts.n_users = 1
+opts.context = 2      # Hard-coded for now.
 opts.n_mfcc = 20
-opts.context = 3
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
@@ -76,23 +74,16 @@ def align_iterator(input_alignments, sample_rate):
             path = a.pop(0)
             user_id = np.array(int(a.pop(0)), dtype=np.int32).reshape(1, 1)
             assert a.pop(0) == ':'
-            alen = (len(a) - 1)//2
-            frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
+            alen = (len(a) - 1)//3
+            assert a[alen*2] == ':'
+            frame_labels = np.array(map(int, a[0:alen*2]), dtype=np.int32)
+            frame_labels = frame_labels.reshape(-1, opts.context)
+            frame_lf0 = np.array(map(float, a[alen*2+1:]), dtype=np.float32)
             repeat_factor = sample_rate/100
-            if opts.context == 2:
-                sample_labels = biphone(frame_labels).repeat(
-                    repeat_factor, axis=0)
-            elif opts.context == 3:
-                sample_labels = triphone(frame_labels).repeat(
-                    repeat_factor, axis=0)
-            else:
-                sample_labels = frame_labels.repeat(
-                    repeat_factor, axis=0).reshape(1, -1)
-            frame_lf0 = np.array(map(float, a[alen+1:]), dtype=np.float32)
-            sample_lf0 = frame_lf0.repeat(repeat_factor)
-            for i in xrange(sample_labels.shape[0]):
-                yield user_id, sample_labels[i:i+1, :].reshape(
-                    1, opts.context), sample_lf0[i:i+1].reshape(1, 1)
+            for i in xrange(frame_labels.shape[0]):
+                for j in xrange(repeat_factor):
+                    yield (user_id, frame_labels[i:i+1, :],
+                           frame_lf0[i:i+1].reshape(1, 1))
 
 input_dim = opts.quantization_channels if opts.one_hot_input else 1
 prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)

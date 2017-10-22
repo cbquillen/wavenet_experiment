@@ -27,11 +27,11 @@ $ ./wn_trainer.py -l {logdir} -o {checkpoint-file} -d {training_database}
 ```
 The training database is a simple text file. It contains lines of the form
 ```
-    {filename} user# : phone#1 phone#2 ... phone#N : log_f0#1 ... log_F0#N
+    {filename} user# : left_phone#1 right_phone#1 ... left_phone#N right_phone#N : log_f0#1 ... log_F0#N
 ```
 the phone labels are at 100/second.  The log_f0 labels are the same rate.
-I provide a sample database for slt via the file 'slt_f0b.txt'.  You will
-probably have to change the path names in that file.
+I provide a sample database for slt via the file 'slt_trn.txt' and 'slt_tst.txt'.
+You will probably have to change the path names in those files.
 
 then after training a while:
 
@@ -79,5 +79,5 @@ use the same one that you used in training.
 
 There are of course some disadvantages too.
 
-Here is an output sample: [sample_output.wav](http://github.com/cbquillen/wavenet_experiment/blob/triphone/sample_output.wav)
+Here is an output sample: [sample_output.wav](http://github.com/cbquillen/wavenet_experiment/blob/biphone/sample_output.wav)
 

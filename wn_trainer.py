@@ -73,12 +73,12 @@ opts.max_checkpoints = 30
 opts.clip = None
 opts.which_future = 1  # Iterate prediction this many times.
 opts.reverse = False  # not used in this version..
+opts.context = 2      # Hard-coded, for now.
 opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
 opts.mfcc_weight = 0.001
 opts.nopad = False      # True to use training without the padding method.
-opts.context = 3        # Triphone context.  Use 2 for biphone.
 opts.dropout = 0.0
 
 # Set opts.* parameters from a parameter file if you want:
@@ -105,7 +105,7 @@ data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    overlap=overlap, reverse=False,
                    silence_threshold=opts.silence_threshold,
                    n_chunks=opts.n_chunks, queue_size=opts.n_chunks,
-                   n_mfcc=opts.n_mfcc, context=opts.context)
+                   n_mfcc=opts.n_mfcc)
 assert opts.n_phones == data.n_phones
 assert opts.n_users == data.n_users
 

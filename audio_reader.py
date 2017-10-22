@@ -29,13 +29,14 @@ def load_audio_alignments(alignment_list_file, sample_rate):
             if user >= iuser:
                 iuser = user+1
             assert a.pop(0) == ':'
-            alen = (len(a) - 1)//2
-            assert a[alen] == ':'
-            frame_labels = np.array(map(int, a[0:alen]), dtype=np.int32)
-            frame_lf0 = np.array(map(float, a[alen+1:]), dtype=np.float32)
+            alen = (len(a) - 1)//3
+            assert a[alen*2] == ':'
+            frame_labels = np.array(map(int, a[0:alen*2]), dtype=np.int32)
+            frame_lf0 = np.array(map(float, a[alen*2+1:]), dtype=np.float32)
             for i, phone in enumerate(frame_labels):
                 if phone >= iphone:
                     iphone = phone+1
+            frame_labels = frame_labels.reshape(-1, 2)
             files.append(path)
             alignments[path] = user, frame_labels, frame_lf0
     print("files length: {} users {} phones {}".format(
@@ -43,19 +44,8 @@ def load_audio_alignments(alignment_list_file, sample_rate):
     return files, alignments, iuser, iphone
 
 
-def biphone(labels):
-    return np.append(labels, np.append(labels[1:], labels[-1])
-                     ).reshape(2, -1).transpose()
-
-
-def triphone(labels):
-    return np.append(
-        np.append(np.append(labels[0], labels[0:-1]), labels),
-        np.append(labels[1:], labels[-1])).reshape(3, -1).transpose()
-
-
 # Never finishes.
-def audio_iterator(files, alignments, sample_rate, n_mfcc, context):
+def audio_iterator(files, alignments, sample_rate, n_mfcc):
     epoch = 0
 
     while True:
@@ -68,15 +58,7 @@ def audio_iterator(files, alignments, sample_rate, n_mfcc, context):
             if maxv > 1e-5:
                 audio *= 1.0/maxv
             repeat_factor = sample_rate/100
-            if context == 2:
-                sample_labels = biphone(frame_labels).repeat(
-                    repeat_factor, axis=0)
-            elif context == 3:
-                sample_labels = triphone(frame_labels).repeat(
-                    repeat_factor, axis=0)
-            else:
-                sample_labels = frame_labels.repeat(
-                    repeat_factor, axis=0).reshape(1, -1)
+            sample_labels = frame_labels.repeat(repeat_factor, axis=0)
             sample_lf0 = frame_lf0.repeat(repeat_factor)
             audio = audio[:sample_labels.shape[0]]  # clip off the excess.
             user = np.full((sample_labels.shape[0],), user_id, dtype=np.int32)
@@ -120,7 +102,7 @@ class AudioReader(object):
 
     def __init__(self, alignment_list_file, coord, sample_rate,
                  chunk_size, overlap=0, reverse=False, silence_threshold=None,
-                 n_chunks=5, queue_size=5, n_mfcc=12, context=3):
+                 n_chunks=5, queue_size=5, n_mfcc=12):
 
         assert chunk_size > overlap
 
@@ -132,7 +114,7 @@ class AudioReader(object):
         self.n_chunks = n_chunks
         self.overlap = overlap
         self.n_mfcc = n_mfcc
-        self.context = context
+        self.context = 2        # Hard coded for now.
         self.threads = []
         self.sample_placeholder = tf.placeholder(dtype=tf.float32, shape=None)
         self.user_placeholder = tf.placeholder(dtype=tf.int32, shape=None)
@@ -142,7 +124,7 @@ class AudioReader(object):
         self.queue = tf.PaddingFIFOQueue(
             queue_size,
             ['float32', 'int32', 'int32', 'float32', 'float32'],
-            shapes=[(None,), (None,), (None, context), (None,),
+            shapes=[(None,), (None,), (None, self.context), (None,),
                     (None, self.n_mfcc)])
         self.enqueue = self.queue.enqueue([self.sample_placeholder,
                                            self.user_placeholder,
@@ -175,7 +157,7 @@ class AudioReader(object):
         # iterator.next() will never stop.  It will allow us to go
         # through the data set multiple times.
         iterator = audio_iterator(self.files, self.alignments,
-                                  self.sample_rate, self.n_mfcc, self.context)
+                                  self.sample_rate, self.n_mfcc)
 
         # Inflate chunk_size by the amount of overlap for convenience:
         orig_chunk_size = self.chunk_size
