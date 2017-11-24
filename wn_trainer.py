@@ -73,13 +73,14 @@ opts.max_checkpoints = 30
 opts.clip = None
 opts.which_future = 1  # Iterate prediction this many times.
 opts.reverse = False  # not used in this version..
-opts.context = 2      # Hard-coded, for now.
+opts.context = 3      # 2 == biphone, 3 == triphone.
 opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
 opts.mfcc_weight = 0.001
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
+opts.feature_noise = 0.0
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -105,7 +106,7 @@ data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    overlap=overlap, reverse=False,
                    silence_threshold=opts.silence_threshold,
                    n_chunks=opts.n_chunks, queue_size=opts.n_chunks,
-                   n_mfcc=opts.n_mfcc)
+                   n_mfcc=opts.n_mfcc, context=opts.context)
 assert opts.n_phones == data.n_phones
 assert opts.n_users == data.n_users
 
@@ -120,8 +121,13 @@ with tf.name_scope("input_massaging"):
         user = None
 
     # We will try to predict the encoded_batch, which is a quantized version
-    # of the input.
+    # of the input.  Except if we are adding noise.
+    if opts.feature_noise > 0:
+        labels = mu_law_encode(batch, opts.quantization_channels)
+        batch += tf.random_normal(tf.shape(batch), stddev=opts.feature_noise)
     encoded_batch = mu_law_encode(batch, opts.quantization_channels)
+    if opts.feature_noise <= 0:
+        labels = encoded_batch
     if opts.one_hot_input:
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
     else:
@@ -162,12 +168,12 @@ with tf.name_scope("loss"):
             loss += tf.reduce_mean(
                 tf.nn.sparse_softmax_cross_entropy_with_logits(
                     logits=future_out[:, :-(i_future+1), :],
-                    labels=encoded_batch[:, overlap+i_future+1:]))
+                    labels=labels[:, overlap+i_future+1:]))
         else:
             loss += tf.reduce_mean(
                 tf.nn.sparse_softmax_cross_entropy_with_logits(
                     logits=future_out[:, i_future+1:, :],
-                    labels=encoded_batch[:, :-(overlap+i_future+1)]))
+                    labels=labels[:, :-(overlap+i_future+1)]))
 
     loss /= opts.which_future
 

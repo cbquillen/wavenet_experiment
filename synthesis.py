@@ -44,7 +44,7 @@ opts.reverse = False
 opts.silence_phone = 0
 opts.n_phones = 41
 opts.n_users = 1
-opts.context = 2      # Hard-coded for now.
+opts.context = 3      # 2 == biphone, 3 == triphone
 opts.n_mfcc = 20
 
 # Further options *must* come from a parameter file.
@@ -67,18 +67,20 @@ if opts.input_alignments is None:
     exit(1)
 
 
-def align_iterator(input_alignments, sample_rate):
+def align_iterator(input_alignments, sample_rate, context):
     with open(input_alignments) as f:
         for line in f:
             a = line.rstrip().split()
             path = a.pop(0)
             user_id = np.array(int(a.pop(0)), dtype=np.int32).reshape(1, 1)
             assert a.pop(0) == ':'
-            alen = (len(a) - 1)//3
-            assert a[alen*2] == ':'
-            frame_labels = np.array(map(int, a[0:alen*2]), dtype=np.int32)
-            frame_labels = frame_labels.reshape(-1, opts.context)
-            frame_lf0 = np.array(map(float, a[alen*2+1:]), dtype=np.float32)
+            alen = (len(a) - 1)//(context+1)
+            assert a[alen*context] == ':'
+            frame_labels = np.array(map(int, a[0:alen*context]),
+                                    dtype=np.int32)
+            frame_labels = frame_labels.reshape(-1, context)
+            frame_lf0 = np.array(map(float, a[alen*context+1:]),
+                                 dtype=np.float32)
             repeat_factor = sample_rate/100
             for i in xrange(frame_labels.shape[0]):
                 for j in xrange(repeat_factor):
@@ -155,7 +157,7 @@ samples = []
 
 last_time = time.time()
 for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
-                                          opts.sample_rate):
+                                          opts.sample_rate, opts.context):
     output, prev_out = sess.run(
         fetches=[max_likeli_sample, out],
         feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,

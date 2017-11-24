@@ -27,7 +27,7 @@ $ ./wn_trainer.py -l {logdir} -o {checkpoint-file} -d {training_database}
 ```
 The training database is a simple text file. It contains lines of the form
 ```
-    {filename} user# : left_phone#1 right_phone#1 ... left_phone#N right_phone#N : log_f0#1 ... log_F0#N
+    {filename} user# : context#1_phone#1 .. context#N_phone#1 ... context#1_phone#M ... context#N_phone#M : log_f0#1 ... log_F0#N
 ```
 the phone labels are at 100/second.  The log_f0 labels are the same rate.
 I provide a sample database for slt via the file 'slt_trn.txt' and 'slt_tst.txt'.

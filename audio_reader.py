@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 
 
-def load_audio_alignments(alignment_list_file, sample_rate):
+def load_audio_alignments(alignment_list_file, sample_rate, context):
     '''Load the audio waveforms and alignments from a list file.
        The file format is
        wav_path user_# : phone#_1 ... phone#_N : log_f0_1 .. log_f0_N
@@ -29,14 +29,16 @@ def load_audio_alignments(alignment_list_file, sample_rate):
             if user >= iuser:
                 iuser = user+1
             assert a.pop(0) == ':'
-            alen = (len(a) - 1)//3
-            assert a[alen*2] == ':'
-            frame_labels = np.array(map(int, a[0:alen*2]), dtype=np.int32)
-            frame_lf0 = np.array(map(float, a[alen*2+1:]), dtype=np.float32)
+            alen = (len(a) - 1)//(context+1)
+            assert a[alen*context] == ':'
+            frame_labels = np.array(map(int, a[0:alen*context]),
+                                    dtype=np.int32)
+            frame_lf0 = np.array(map(float, a[alen*context+1:]),
+                                 dtype=np.float32)
             for i, phone in enumerate(frame_labels):
                 if phone >= iphone:
                     iphone = phone+1
-            frame_labels = frame_labels.reshape(-1, 2)
+            frame_labels = frame_labels.reshape(-1, context)
             files.append(path)
             alignments[path] = user, frame_labels, frame_lf0
     print("files length: {} users {} phones {}".format(
@@ -102,7 +104,7 @@ class AudioReader(object):
 
     def __init__(self, alignment_list_file, coord, sample_rate,
                  chunk_size, overlap=0, reverse=False, silence_threshold=None,
-                 n_chunks=5, queue_size=5, n_mfcc=12):
+                 n_chunks=5, queue_size=5, n_mfcc=12, context=2):
 
         assert chunk_size > overlap
 
@@ -114,7 +116,7 @@ class AudioReader(object):
         self.n_chunks = n_chunks
         self.overlap = overlap
         self.n_mfcc = n_mfcc
-        self.context = 2        # Hard coded for now.
+        self.context = context        # Hard coded for now.
         self.threads = []
         self.sample_placeholder = tf.placeholder(dtype=tf.float32, shape=None)
         self.user_placeholder = tf.placeholder(dtype=tf.int32, shape=None)
@@ -133,7 +135,7 @@ class AudioReader(object):
                                            self.mfcc_placeholder])
 
         self.files, self.alignments, self.n_users, self.n_phones = \
-            load_audio_alignments(alignment_list_file, sample_rate)
+            load_audio_alignments(alignment_list_file, sample_rate, context)
 
     def dequeue(self, num_elements):
         output = self.queue.dequeue_many(num_elements)
