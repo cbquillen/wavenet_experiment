@@ -30,7 +30,7 @@ parser.add_option('-i', '--input_file', dest='input_file',
 parser.add_option('-o', '--output_file', dest='output_file',
                   default='ckpt', help='Output checkpoint file')
 parser.add_option('-d', '--data', dest='data_list',
-                  default='align3.txt', help='VCTK corpus list file')
+                  default='align3_tph_f0.txt', help='Corpus database file')
 parser.add_option('-c', '--checkpoint_rate', dest='checkpoint_rate',
                   type=int, default=1000, help='Rate to checkpoint.')
 parser.add_option('-s', '--summary_rate', dest='summary_rate',
@@ -39,7 +39,7 @@ parser.add_option('-S', '--silence_threshold', dest='silence_threshold',
                   type=float, default=0.2,
                   help='Silence classifier energy threshold')
 parser.add_option('-Z', '--audio_chunk_size', dest='audio_chunk_size',
-                  type=int, default=10000, help='Audio chunk size per batch.')
+                  type=int, default=500, help='Audio chunk size per batch.')
 parser.add_option('-L', '--base_learning_rate', dest='base_learning_rate',
                   type=float, default=1e-03,
                   help='The initial learning rate. ' +
@@ -56,30 +56,31 @@ parser.add_option('-b', '--batch_norm', dest='batch_norm',
 opts, cmdline_args = parser.parse_args()
 
 # Options that can be set in a parameter file:
-opts.canonical_epoch_size = 20000.0
-opts.n_chunks = 5           # How many utterance chunks to train at once.
-opts.input_kernel_size = 32  # The size of the input layer kernel.
+opts.canonical_epoch_size = 5000.0
+opts.n_chunks = 10           # How many utterance chunks to train at once.
+opts.input_kernel_size = 64  # The size of the input layer kernel.
 opts.kernel_size = 4        # The size of other kernels.
-opts.num_outputs = 64       # The number of convolutional channels.
+opts.num_outputs = 128       # The number of convolutional channels.
 opts.num_outputs2 = opts.num_outputs  # The "inner" convolutional channels.
-opts.skip_dimension = 256   # The dimension for skip connections.
-opts.dilations = [[2**N for N in range(10)]] * 5
+opts.skip_dimension = 512   # The dimension for skip connections.
+opts.dilations = [[2**N for N in range(8)]] * 5
 opts.epsilon = 1e-4      # Adams optimizer epsilon.
 opts.max_steps = 200000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
-opts.one_hot_input = False
+opts.one_hot_input = True
 opts.max_checkpoints = 30
 opts.clip = None
 opts.which_future = 1  # Iterate prediction this many times.
 opts.reverse = False  # not used in this version..
 opts.user_dim = 10    # User vector dimension to use.
-opts.n_phones = 183
+opts.context = 3      # 2 == biphone, 3 == triphone.
+opts.n_phones = 41
 opts.n_users = 98
-opts.n_mfcc = 12
+opts.n_mfcc = 20
 opts.mfcc_weight = 0.001
 opts.nopad = False      # True to use training without the padding method.
-opts.context = 3        # Triphone context.  Use 2 for biphone.
+opts.dropout = 0.0
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -242,10 +243,6 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
     print("loss[{}]: {:.3f} mfcc {:.3f} dt {:.3f} lr {:.4g}".format(
         global_step, cur_loss, cur_mfcc_loss, new_time - last_time, cur_lr))
     last_time = new_time
-
-    if (global_step + 1) % opts.checkpoint_rate == 0 and \
-            opts.output_file is not None:
-        saver.save(sess, opts.output_file, global_step)
 
     sys.stdout.flush()
     # print(cur_uloss)
