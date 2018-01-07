@@ -163,6 +163,7 @@ for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
         feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,
                    pLf0: iLf0})
     samples.append(output)
+    print(output)
     if len(samples) % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(len(samples) + 1,

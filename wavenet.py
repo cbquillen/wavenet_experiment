@@ -121,7 +121,13 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             'normalizer_fn': layers.batch_norm,
             'normalizer_params': {
                 'is_training': is_training,
+                'trainable': True,
+                'variables_collections': {
+                    'moving_mean': [tf.GraphKeys.TRAINABLE_VARIABLES],
+                    'moving_variance': [tf.GraphKeys.TRAINABLE_VARIABLES]},
                 'reuse': reuse,
+                'scale': True,  # Update Variance too.
+                'scope': 'BatchNorm',
                 # Do updates in place. slower?
                 'updates_collections': None,
             }
