@@ -154,7 +154,8 @@ for i in xrange(1, opts.which_future):
     future_outs.append(future_out)
 
 # That should have created all training variables.  Now we can make a saver.
-saver = tf.train.Saver(tf.trainable_variables(),
+saver = tf.train.Saver(tf.trainable_variables() +
+                       tf.get_collection('batch_norm'),
                        max_to_keep=opts.max_checkpoints)
 
 if opts.histogram_summaries:
@@ -201,16 +202,18 @@ adams_epsilon = tf.placeholder(tf.float32, shape=())
 if opts.base_learning_rate > 0:
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
                                        epsilon=adams_epsilon)
-    if opts.clip is not None:
-        gradients = optimizer.compute_gradients(
-            loss + opts.mfcc_weight*mfcc_loss + reg_loss,
-            var_list=tf.trainable_variables())
-        clipped_gradients = [(tf.clip_by_value(var, -opts.clip, opts.clip),
-                              name) for var, name in gradients]
-        minimize = optimizer.apply_gradients(clipped_gradients)
-    else:
-        minimize = optimizer.minimize(loss + opts.mfcc_weight*mfcc_loss,
-                                      var_list=tf.trainable_variables())
+    with tf.get_default_graph().control_dependencies(
+            tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+        if opts.clip is not None:
+            gradients = optimizer.compute_gradients(
+                loss + opts.mfcc_weight*mfcc_loss + reg_loss,
+                var_list=tf.trainable_variables())
+            clipped_gradients = [(tf.clip_by_value(var, -opts.clip, opts.clip),
+                                  name) for var, name in gradients]
+            minimize = optimizer.apply_gradients(clipped_gradients)
+        else:
+            minimize = optimizer.minimize(loss + opts.mfcc_weight*mfcc_loss,
+                                          var_list=tf.trainable_variables())
 else:
     minimize = tf.constant(0)   # a noop.
 
@@ -224,7 +227,7 @@ tf.get_default_graph().finalize()
 
 print("Model variables:")
 total_params = 0
-for var in tf.trainable_variables():
+for var in tf.trainable_variables() + tf.get_collection('batch_norm'):
     vshape = var.get_shape().as_list()
     total_params += reduce(mul, vshape)
     print("  ", var.name, vshape)

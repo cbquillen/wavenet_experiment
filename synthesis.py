@@ -116,7 +116,8 @@ with tf.name_scope("Generate"):
             mu_law_decode(x, opts.quantization_channels), ())
         out = tf.reshape(gen_sample, (1, 1, 1))
 
-saver = tf.train.Saver(tf.trainable_variables())
+saver = tf.train.Saver(tf.trainable_variables() +
+                       tf.get_collection('batch_norm'))
 init = tf.global_variables_initializer()
 
 initial_zeros = compute_overlap(opts)
@@ -163,7 +164,6 @@ for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
         feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,
                    pLf0: iLf0})
     samples.append(output)
-    print(output)
     if len(samples) % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(len(samples) + 1,

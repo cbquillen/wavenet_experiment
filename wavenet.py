@@ -121,15 +121,12 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             'normalizer_fn': layers.batch_norm,
             'normalizer_params': {
                 'is_training': is_training,
-                'trainable': True,
+                'trainable': False,
                 'variables_collections': {
-                    'moving_mean': [tf.GraphKeys.TRAINABLE_VARIABLES],
-                    'moving_variance': [tf.GraphKeys.TRAINABLE_VARIABLES]},
+                   'gamma': ['batch_norm']},
                 'reuse': reuse,
                 'scale': True,  # Update Variance too.
-                'scope': 'BatchNorm',
-                # Do updates in place. slower?
-                'updates_collections': None,
+                'scope': 'BatchNorm'
             }
         }
 
@@ -226,9 +223,12 @@ def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
             'normalizer_fn': layers.batch_norm,
             'normalizer_params': {
                 'is_training': is_training,
+                'trainable': False,
+                'variables_collections': {
+                    'gamma': ['batch_norm']},
                 'reuse': reuse,
-                # Do updates in place. slower?
-                'updates_collections': None,
+                'scale': True,  # Update Variance too.
+                'scope': 'BatchNorm'
             }
         }
 
