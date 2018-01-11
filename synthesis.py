@@ -89,6 +89,8 @@ def align_iterator(input_alignments, sample_rate, context):
 
 input_dim = opts.quantization_channels if opts.one_hot_input else 1
 prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)
+if opts.one_hot_input:
+    prev_out[0, 0, opts.quantization_channels/2] = 1
 last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 pUser = tf.placeholder(tf.int32, shape=(1, 1), name='user')
