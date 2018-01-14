@@ -181,7 +181,7 @@ class AudioReader(object):
                 # Cut samples into fixed size pieces.
                 # top up the current buffers[i] element if it
                 # is too short.
-                while len(buffer_) < padded_chunk_size:
+                while len(buffer_) < padded_chunk_size + 1:
                     filename, audio, user, alignment, lf0, mfcc = \
                         iterator.next()
                     if self.silence_threshold is not None:
@@ -211,7 +211,7 @@ class AudioReader(object):
 
                 # Send one piece
                 if not self.reverse:
-                    piece = buffer_[:padded_chunk_size]
+                    piece = buffer_[:padded_chunk_size+1]
                     piece_user = buf_user[:padded_chunk_size]
                     piece_align = buf_align[:padded_chunk_size, :]
                     piece_lf0 = buf_lf0[:padded_chunk_size]
@@ -222,7 +222,7 @@ class AudioReader(object):
                     buf_lf0 = buf_lf0[orig_chunk_size:]
                     buf_mfcc = buf_mfcc[orig_chunk_size:, :]
                 else:
-                    piece = buffer_[-padded_chunk_size:]
+                    piece = buffer_[-padded_chunk_size-1:]
                     piece_user = buf_user[-padded_chunk_size:]
                     piece_align = buf_align[-padded_chunk_size:, :]
                     piece_lf0 = buf_lf0[-padded_chunk_size:]

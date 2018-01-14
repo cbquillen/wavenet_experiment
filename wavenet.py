@@ -9,7 +9,6 @@ from __future__ import print_function
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from tensorflow.contrib.framework import arg_scope
-from ops import mu_law_decode, mu_law_encode
 
 
 def wavenet_block(xpad, x, conditioning, num_outputs, num_outputs2, rate,

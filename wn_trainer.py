@@ -96,10 +96,10 @@ sess = tf.Session()
 coord = tf.train.Coordinator()  # Is this used for anything?
 
 if opts.nopad:
-    overlap = compute_overlap(opts)
+    overlap = compute_overlap(opts) + opts.which_future-1
     wavenet = wavenet_unpadded
 else:
-    overlap = 0
+    overlap = opts.which_future-1
 
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    chunk_size=opts.audio_chunk_size,
@@ -117,9 +117,6 @@ with tf.name_scope("input_massaging"):
     batch, user, alignment, lf0, mfcc = \
         data.dequeue(num_elements=opts.n_chunks)
 
-    if opts.n_users <= 1:
-        user = None
-
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.  Except if we are adding noise.
     if opts.feature_noise > 0:
@@ -133,7 +130,12 @@ with tf.name_scope("input_massaging"):
     else:
         batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
 
-wavenet_out, omfcc = wavenet((batch, user, alignment, lf0), opts,
+    wf_slice = slice(0, opts.audio_chunk_size)
+    in_user = user[:, wf_slice] if opts.n_users > 1 else None
+
+    wavenet_out, omfcc = wavenet((batch[:, wf_slice, :],
+                             in_user, alignment[:, wf_slice],
+                             lf0[:, wf_slice]), opts,
                              is_training=opts.base_learning_rate > 0)
 future_outs = [wavenet_out]
 future_out = wavenet_out
@@ -147,9 +149,11 @@ for i in xrange(1, opts.which_future):
             next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
                                     shape=(opts.n_chunks, -1, 1))
             next_input = mu_law_decode(next_input, opts.quantization_channels)
-        future_out, _ = wavenet_unpadded(
-            (next_input, user, alignment, lf0), opts, reuse=True,
-            pad_reuse=False, extra_pad_scope=str(i),
+        wf_slice = slice(i, i+opts.audio_chunk_size)
+        in_user = user[:, wf_slice] if opts.n_users > 1 else None
+        future_out, _ = wavenet(
+            (next_input, in_user, alignment[:, wf_slice], lf0[:, wf_slice]),
+            opts, reuse=True, pad_reuse=False, extra_pad_scope=str(i),
             is_training=opts.base_learning_rate > 0)
     future_outs.append(future_out)
 
@@ -166,15 +170,15 @@ loss = reg_loss = 0
 with tf.name_scope("loss"):
     for i_future, future_out in enumerate(future_outs):
         if not opts.reverse:
-            loss += tf.reduce_mean(
-                tf.nn.sparse_softmax_cross_entropy_with_logits(
-                    logits=future_out[:, :-(i_future+1), :],
-                    labels=labels[:, overlap+i_future+1:]))
+            label_range = slice(i_future+1, i_future+1+opts.audio_chunk_size)
         else:
-            loss += tf.reduce_mean(
-                tf.nn.sparse_softmax_cross_entropy_with_logits(
-                    logits=future_out[:, i_future+1:, :],
-                    labels=labels[:, :-(overlap+i_future+1)]))
+            label_range = slice(opts.which_future-i_future-1,
+                                opts.which_future-i_future-1 +
+                                opts.audio_chunk_size)
+        loss += tf.reduce_mean(
+            tf.nn.sparse_softmax_cross_entropy_with_logits(
+                logits=future_out,
+                labels=labels[:, label_range]))
 
     loss /= opts.which_future
 
