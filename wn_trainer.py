@@ -119,6 +119,7 @@ with tf.name_scope("input_massaging"):
 
     # We will try to predict the encoded_batch, which is a quantized version
     # of the input.  Except if we are adding noise.
+    orig_batch = batch
     if opts.feature_noise > 0:
         labels = mu_law_encode(batch, opts.quantization_channels)
         batch += tf.random_normal(tf.shape(batch), stddev=opts.feature_noise)
@@ -133,29 +134,43 @@ with tf.name_scope("input_massaging"):
     wf_slice = slice(0, opts.audio_chunk_size)
     in_user = user[:, wf_slice] if opts.n_users > 1 else None
 
-    wavenet_out, omfcc = wavenet((batch[:, wf_slice, :],
-                             in_user, alignment[:, wf_slice],
-                             lf0[:, wf_slice]), opts,
-                             is_training=opts.base_learning_rate > 0)
-future_outs = [wavenet_out]
-future_out = wavenet_out
+    wavenet_out, omfcc = wavenet(
+        (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
+         lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
 
+with tf.name_scope("loss"):
+    loss = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=wavenet_out,
+            labels=labels[:, 1:1+opts.audio_chunk_size]))
+
+    tf.summary.scalar(name="loss", tensor=loss)
+
+future_loss = tf.constant(0.0)
 for i in xrange(1, opts.which_future):
     with tf.name_scope('future_'+str(i)):
         if opts.one_hot_input:
-            next_input = tf.nn.softmax(future_out)
+            next_input = tf.nn.softmax(wavenet_out)
         else:
             # Should really sample instead of arg_max...
-            next_input = tf.reshape(tf.arg_max(future_out, dimension=2),
+            next_input = tf.reshape(tf.arg_max(wavenet_out, dimension=2),
                                     shape=(opts.n_chunks, -1, 1))
-            next_input = mu_law_decode(next_input, opts.quantization_channels)
+            next_input = mu_law_decode(
+                next_input, opts.quantization_channels)
         wf_slice = slice(i, i+opts.audio_chunk_size)
         in_user = user[:, wf_slice] if opts.n_users > 1 else None
-        future_out, _ = wavenet(
+        wavenet_out, _ = wavenet(
             (next_input, in_user, alignment[:, wf_slice], lf0[:, wf_slice]),
             opts, reuse=True, pad_reuse=False, extra_pad_scope=str(i),
             is_training=opts.base_learning_rate > 0)
-    future_outs.append(future_out)
+
+        max_likeli = mu_law_decode(tf.argmax(wavenet_out, axis=2),
+                                   opts.quantization_channels)
+        label_range = slice(i+1, i+1+opts.audio_chunk_size)
+        future_loss += tf.reduce_sum(
+            tf.abs(max_likeli-orig_batch[:, label_range]))
+
+tf.summary.scalar(name="future_loss", tensor=future_loss)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables() +
@@ -166,23 +181,7 @@ if opts.histogram_summaries:
     tf.summary.histogram(name="wavenet", values=wavenet_out)
     layers.summaries.summarize_variables()
 
-loss = reg_loss = 0
-with tf.name_scope("loss"):
-    for i_future, future_out in enumerate(future_outs):
-        if not opts.reverse:
-            label_range = slice(i_future+1, i_future+1+opts.audio_chunk_size)
-        else:
-            label_range = slice(opts.which_future-i_future-1,
-                                opts.which_future-i_future-1 +
-                                opts.audio_chunk_size)
-        loss += tf.reduce_mean(
-            tf.nn.sparse_softmax_cross_entropy_with_logits(
-                logits=future_out,
-                labels=labels[:, label_range]))
-
-    loss /= opts.which_future
-
-tf.summary.scalar(name="loss", tensor=loss)
+reg_loss = 0
 
 with tf.name_scope("mfcc_loss"):
     mfcc_loss = tf.constant(0.0)
@@ -204,20 +203,23 @@ adams_epsilon = tf.placeholder(tf.float32, shape=())
 # perhaps to see what the loss variance is on the training.
 # in that case, set opts.base_learning_rate=0
 if opts.base_learning_rate > 0:
-    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
-                                       epsilon=adams_epsilon)
-    with tf.get_default_graph().control_dependencies(
-            tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-        if opts.clip is not None:
-            gradients = optimizer.compute_gradients(
-                loss + opts.mfcc_weight*mfcc_loss + reg_loss,
-                var_list=tf.trainable_variables())
-            clipped_gradients = [(tf.clip_by_value(var, -opts.clip, opts.clip),
-                                  name) for var, name in gradients]
-            minimize = optimizer.apply_gradients(clipped_gradients)
-        else:
-            minimize = optimizer.minimize(loss + opts.mfcc_weight*mfcc_loss,
-                                          var_list=tf.trainable_variables())
+    with tf.name_scope("optimizer"):
+        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
+                                           epsilon=adams_epsilon)
+        with tf.get_default_graph().control_dependencies(
+                tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+            sum_loss = loss + future_loss + \
+                opts.mfcc_weight*mfcc_loss + reg_loss
+            if opts.clip is not None:
+                gradients = optimizer.compute_gradients(
+                    sum_loss, var_list=tf.trainable_variables())
+                clipped_gradients = [
+                    (tf.clip_by_value(var, -opts.clip, opts.clip), name)
+                    for var, name in gradients]
+                minimize = optimizer.apply_gradients(clipped_gradients)
+            else:
+                minimize = optimizer.minimize(
+                    sum_loss, var_list=tf.trainable_variables())
 else:
     minimize = tf.constant(0)   # a noop.
 
@@ -259,19 +261,21 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
              -global_step/opts.canonical_epoch_size/5.0)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
-        cur_loss, cur_mfcc_loss, summary_pb = sess.run(
-            [loss, mfcc_loss, summaries, minimize],
+        cur_loss, cur_future_loss, cur_mfcc_loss, summary_pb = sess.run(
+            [loss, future_loss, mfcc_loss, summaries, minimize],
             feed_dict={learning_rate: cur_lr,
-                       adams_epsilon: opts.epsilon})[0:3]
+                       adams_epsilon: opts.epsilon})[0:4]
         summary_writer.add_summary(summary_pb, global_step)
     else:
-        cur_loss, cur_mfcc_loss = sess.run(
-                            [loss, mfcc_loss, minimize],
+        cur_loss, cur_future_loss, cur_mfcc_loss = sess.run(
+                            [loss, future_loss, mfcc_loss, minimize],
                             feed_dict={learning_rate: cur_lr,
-                                       adams_epsilon: opts.epsilon})[0:2]
+                                       adams_epsilon: opts.epsilon})[0:3]
     new_time = time.time()
-    print("loss[{}]: {:.3f} mfcc {:.3f} dt {:.3f} lr {:.4g}".format(
-        global_step, cur_loss, cur_mfcc_loss, new_time - last_time, cur_lr))
+    print(("loss[{}]: {:.3f} future {:.3f}" +
+          " mfcc {:.3f} dt {:.3f} lr {:.4g}").format(
+                global_step, cur_loss, cur_future_loss,
+                cur_mfcc_loss, new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
