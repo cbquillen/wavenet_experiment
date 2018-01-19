@@ -194,10 +194,10 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             skip_connections, num_outputs=opts.skip_dimension,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
         mfcc = layers.conv2d(
-            x, num_outputs=opts.skip_dimension,   # ?
+            skip_connections, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
         x = layers.conv2d(
-            x, num_outputs=opts.quantization_channels,
+            x, num_outputs=opts.quantization_channels+1,
             normalizer_params=None,
             activation_fn=None, scope='output_layer2')
         mfcc = layers.conv2d(
@@ -292,7 +292,7 @@ def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
             skip_connections, num_outputs=opts.skip_dimension,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
         mfcc = layers.conv2d(
-            x, num_outputs=opts.skip_dimension,   # ?
+            skip_connections, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
         x = layers.conv2d(
             x, num_outputs=opts.quantization_channels,

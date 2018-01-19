@@ -36,6 +36,8 @@ parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   help='Do batch normalization')
 parser.add_option("-c", '--cpu', default=False, dest='use_cpu',
                   action='store_true', help='Set to run on CPU.')
+parser.add_option('-A', '--analog_out', dest='analog_out',
+                  action='store_true', help='Save the analog network output')
 
 opts, cmdline_args = parser.parse_args()
 
@@ -102,10 +104,12 @@ with tf.name_scope("Generate"):
     # for zeroizing:
     out, _ = wavenet([last_sample, user, pPhone, pLf0], opts,
                      is_training=False)
-    out = tf.nn.softmax(out)
+    analog_out = tf.reshape(out[:, :, opts.quantization_channels], ())
+    out = tf.nn.softmax(out[:, :, :opts.quantization_channels])
 
-    max_likeli_sample = tf.reshape(
-        mu_law_decode(tf.argmax(out, axis=2), opts.quantization_channels), ())
+    max_likeli_sample = analog_out if opts.analog_out else tf.reshape(
+            mu_law_decode(tf.argmax(out, axis=2),
+                          opts.quantization_channels), ())
 
     # Sample from the output distribution to feed back into the input:
     pick = tf.cumsum(out, axis=2)
