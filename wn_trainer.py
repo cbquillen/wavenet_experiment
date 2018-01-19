@@ -78,6 +78,7 @@ opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
 opts.mfcc_weight = 0.001
+opts.future_weight = 0.001
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
 opts.feature_noise = 0.0
@@ -138,6 +139,10 @@ with tf.name_scope("input_massaging"):
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
 
+with tf.name_scope("output_massaging"):
+    future_out = wavenet_out[:, :, opts.quantization_channels]
+    wavenet_out = wavenet_out[:, :, :opts.quantization_channels]
+
 with tf.name_scope("loss"):
     loss = tf.reduce_mean(
         tf.nn.sparse_softmax_cross_entropy_with_logits(
@@ -147,13 +152,20 @@ with tf.name_scope("loss"):
     tf.summary.scalar(name="loss", tensor=loss)
 
 future_loss = tf.constant(0.0)
-for i in xrange(1, opts.which_future):
+for i in xrange(opts.which_future):
     with tf.name_scope('future_'+str(i)):
+        label_range = slice(i+1, i+1+opts.audio_chunk_size)
+        delta = future_out-orig_batch[:, label_range]
+        future_loss += 20.0*tf.reduce_mean(
+            delta*delta/(tf.abs(orig_batch[:, label_range]) + 0.0039))
+        if i == opts.which_future:
+            continue
+
         if opts.one_hot_input:
             next_input = tf.nn.softmax(wavenet_out)
         else:
             # Should really sample instead of arg_max...
-            next_input = tf.reshape(tf.arg_max(wavenet_out, dimension=2),
+            next_input = tf.reshape(tf.argmax(wavenet_out, axis=2),
                                     shape=(opts.n_chunks, -1, 1))
             next_input = mu_law_decode(
                 next_input, opts.quantization_channels)
@@ -163,12 +175,11 @@ for i in xrange(1, opts.which_future):
             (next_input, in_user, alignment[:, wf_slice], lf0[:, wf_slice]),
             opts, reuse=True, pad_reuse=False, extra_pad_scope=str(i),
             is_training=opts.base_learning_rate > 0)
+        future_out = wavenet_out[:, :, opts.quantization_channels]
+        wavenet_out = wavenet_out[:, :, :opts.quantization_channels]
 
-        max_likeli = mu_law_decode(tf.argmax(wavenet_out, axis=2),
-                                   opts.quantization_channels)
-        label_range = slice(i+1, i+1+opts.audio_chunk_size)
-        future_loss += tf.reduce_sum(
-            tf.abs(max_likeli-orig_batch[:, label_range]))
+future_loss /= opts.which_future
+
 
 tf.summary.scalar(name="future_loss", tensor=future_loss)
 
@@ -208,7 +219,7 @@ if opts.base_learning_rate > 0:
                                            epsilon=adams_epsilon)
         with tf.get_default_graph().control_dependencies(
                 tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-            sum_loss = loss + future_loss + \
+            sum_loss = loss + opts.future_weight*future_loss + \
                 opts.mfcc_weight*mfcc_loss + reg_loss
             if opts.clip is not None:
                 gradients = optimizer.compute_gradients(
