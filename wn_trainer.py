@@ -17,7 +17,7 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from audio_reader import AudioReader
 from ops import mu_law_encode, mu_law_decode
-from wavenet import wavenet, wavenet_unpadded, compute_overlap
+from wavenet import wavenet, compute_overlap
 
 # Options from the command line:
 parser = optparse.OptionParser()
@@ -82,7 +82,6 @@ opts.future_weight = 0.01
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
 opts.feature_noise = 0.0
-opts.minimum_iv = 0.1   # shouldn't matter too much.  <= 1 ought to do it.
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -97,11 +96,7 @@ sess = tf.Session()
 
 coord = tf.train.Coordinator()  # Is this used for anything?
 
-if opts.nopad:
-    overlap = compute_overlap(opts) + opts.which_future-1
-    wavenet = wavenet_unpadded
-else:
-    overlap = opts.which_future-1
+overlap = opts.which_future-1
 
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    chunk_size=opts.audio_chunk_size,
@@ -129,15 +124,18 @@ with tf.name_scope("input_massaging"):
     wf_slice = slice(0, opts.audio_chunk_size)
     in_user = user[:, wf_slice] if opts.n_users > 1 else None
 
-    mu, iv, omfcc = wavenet(
+    ms, omfcc = wavenet(
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
+    mu = ms[:, :, 0]
+    log_is = ms[:, :, 1]
 
 with tf.name_scope("loss"):
-    iv = tf.abs(iv) + opts.minimum_iv
-    x = orig_batch[:, 1:1+opts.audio_chunk_size]
-    delta = x - mu
-    loss = tf.reduce_mean(delta*delta*iv - tf.log(iv))
+    label_range = slice(1, 1+opts.audio_chunk_size)
+    x = orig_batch[:, label_range]
+    i_s = tf.exp(log_is)
+    delta2 = 0.5*(x - mu)*i_s
+    loss = tf.reduce_mean(-log_is + tf.log(tf.exp(delta2) + tf.exp(-delta2)))
 
     tf.summary.scalar(name="loss", tensor=loss)
 
@@ -153,10 +151,11 @@ for i in xrange(1, opts.which_future):
             next_input = tf.reshape(mu, shape=(opts.n_chunks, -1, 1))
         wf_slice = slice(i, i+opts.audio_chunk_size)
         in_user = user[:, wf_slice] if opts.n_users > 1 else None
-        mu, _, _ = wavenet(
+        ms, _ = wavenet(
             (next_input, in_user, alignment[:, wf_slice], lf0[:, wf_slice]),
             opts, reuse=True, pad_reuse=False, extra_pad_scope=str(i),
             is_training=opts.base_learning_rate > 0)
+        mu = ms[:, :, 0]
         label_range = slice(i+1, i+1+opts.audio_chunk_size)
         delta = mu - orig_batch[:, label_range]
         future_loss += tf.reduce_mean(
