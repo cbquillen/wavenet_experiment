@@ -193,17 +193,22 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         x = layers.conv2d(
             skip_connections, num_outputs=opts.skip_dimension,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
+        v = layers.conv2d(
+            skip_connections, num_outputs=opts.skip_dimension,  # ?
+            activation_fn=tf.nn.relu, scope='var_layer1')
         mfcc = layers.conv2d(
             x, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
-        x = layers.conv2d(
-            x, num_outputs=opts.quantization_channels+1,
-            normalizer_params=None,
-            activation_fn=None, scope='output_layer2')
+        x = layers.conv2d(x, num_outputs=1, normalizer_params=None,
+                          activation_fn=None, scope='output_layer2')
+        x = tf.reshape(x, shape=(opts.n_chunks, -1))
+        v = layers.conv2d(v, num_outputs=1, normalizer_params=None,
+                          activation_fn=None, scope='var_layer2')
+        v = tf.reshape(v, shape=(opts.n_chunks, -1))
         mfcc = layers.conv2d(
             mfcc, num_outputs=opts.n_mfcc, normalizer_params=None,
             activation_fn=None, scope='mfcc_layer2')
-    return x, mfcc
+    return x, v, mfcc
 
 
 def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
@@ -291,17 +296,22 @@ def wavenet_unpadded(inputs, opts, is_training=True, reuse=False,
         x = layers.conv2d(
             skip_connections, num_outputs=opts.skip_dimension,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
+        v = layers.conv2d(
+            skip_connections, num_outputs=opts.skip_dimension,  # ?
+            activation_fn=tf.nn.relu, scope='var_layer1')
         mfcc = layers.conv2d(
             x, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
-        x = layers.conv2d(
-            x, num_outputs=opts.quantization_channels,
-            normalizer_params=None,
-            activation_fn=None, scope='output_layer2')
+        x = layers.conv2d(x, num_outputs=1, normalizer_params=None,
+                          activation_fn=None, scope='output_layer2')
+        x = tf.reshape(x, shape=(opts.n_chunks, -1))
+        v = layers.conv2d(v, num_outputs=1, normalizer_params=None,
+                          activation_fn=None, scope='var_layer2')
+        v = tf.reshape(v, shape=(opts.n_chunks, -1))
         mfcc = layers.conv2d(
             mfcc, num_outputs=opts.n_mfcc, normalizer_params=None,
             activation_fn=None, scope='mfcc_layer2')
-    return x, mfcc
+    return x, v, mfcc
 
 
 def compute_overlap(opts):
