@@ -140,7 +140,6 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
                                   name='align_onehot')
         lang_cond = tf.reshape(
             lang_cond, (opts.n_chunks, -1, opts.n_phones*opts.context))
-        inputs = tf.concat((inputs, lang_cond), axis=2, name='input_concat')
         lf0 = tf.reshape(lf0, (opts.n_chunks, -1, 1))
         if user is not None:
             user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
@@ -190,9 +189,9 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             skip_connections, num_outputs=opts.skip_dimension,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
         mfcc = layers.conv2d(
-            x, num_outputs=opts.skip_dimension,   # ?
+            skip_connections, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
-        ms = layers.conv2d(ms, num_outputs=2, normalizer_params=None,
+        ms = layers.conv2d(ms, num_outputs=3, normalizer_params=None,
                            activation_fn=None, scope='output_layer2')
         mfcc = layers.conv2d(
             mfcc, num_outputs=opts.n_mfcc, normalizer_params=None,

@@ -70,7 +70,7 @@ opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = True
 opts.max_checkpoints = 30
-opts.clip = None
+opts.clip = 0.1
 opts.which_future = 1  # Iterate prediction this many times.
 opts.reverse = False  # not used in this version..
 opts.context = 3      # 2 == biphone, 3 == triphone.
@@ -128,15 +128,17 @@ with tf.name_scope("input_massaging"):
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
     mu = ms[:, :, 0]
-    log_is = ms[:, :, 1]
+    i_s = ms[:, :, 1]
+    i_s = tf.abs(i_s)
+    p = 0.99*tf.nn.tanh(ms[:, :, 2])
 
 with tf.name_scope("loss"):
-    label_range = slice(1, 1+opts.audio_chunk_size)
-    x = orig_batch[:, label_range]
-    i_s = tf.exp(log_is)
-    delta2 = 0.5*(x - mu)*i_s
-    loss = tf.reduce_mean(-log_is + tf.log(tf.exp(delta2) + tf.exp(-delta2)))
+    x = orig_batch[:, 1:1+opts.audio_chunk_size]
+    delta = x - mu
+    the_exp = i_s*(tf.abs(delta) - delta*p)
+    loss = tf.reduce_mean(-tf.log(i_s) - tf.log(1 - p*p) + the_exp)
 
+if opts.logdir is not None:
     tf.summary.scalar(name="loss", tensor=loss)
 
 future_loss = tf.constant(0.0)
@@ -164,7 +166,8 @@ for i in xrange(1, opts.which_future):
 if opts.which_future > 1:
     future_loss /= opts.which_future - 1
 
-tf.summary.scalar(name="future_loss", tensor=future_loss)
+if opts.logdir is not None:
+    tf.summary.scalar(name="future_loss", tensor=future_loss)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables() +
@@ -183,7 +186,8 @@ with tf.name_scope("mfcc_loss"):
         del_mfcc = mfcc[:, overlap:, :]-omfcc
         mfcc_loss = tf.reduce_mean(del_mfcc*del_mfcc)
 
-        tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
+        if opts.logdir is not None:
+            tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
 
 with tf.name_scope("reg_loss"):
     if 'l2reg' in vars(opts):
@@ -218,7 +222,8 @@ if opts.base_learning_rate > 0:
 else:
     minimize = tf.constant(0)   # a noop.
 
-summaries = tf.summary.merge_all()
+if opts.logdir is not None:
+    summaries = tf.summary.merge_all()
 
 init = tf.global_variables_initializer()
 
