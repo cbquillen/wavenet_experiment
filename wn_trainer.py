@@ -70,7 +70,7 @@ opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = True
 opts.max_checkpoints = 30
-opts.clip = None
+opts.clip = 0.1
 opts.which_future = 1  # Iterate prediction this many times.
 opts.reverse = False  # not used in this version..
 opts.context = 3      # 2 == biphone, 3 == triphone.
@@ -128,14 +128,13 @@ with tf.name_scope("input_massaging"):
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
     mu = ms[:, :, 0]
-    log_is = ms[:, :, 1]
+    i_s = abs(ms[:, :, 1])+1e-5
 
 with tf.name_scope("loss"):
     label_range = slice(1, 1+opts.audio_chunk_size)
     x = orig_batch[:, label_range]
-    i_s = tf.exp(log_is)
     delta2 = 0.5*(x - mu)*i_s
-    loss = tf.reduce_mean(-log_is + tf.log(tf.exp(delta2) + tf.exp(-delta2)))
+    loss = tf.reduce_mean(-tf.log(i_s) + tf.log(tf.exp(delta2) + tf.exp(-delta2)))
 
     tf.summary.scalar(name="loss", tensor=loss)
 
