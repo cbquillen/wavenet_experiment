@@ -33,7 +33,7 @@ def wavenet_block(xpad, x, conditioning, num_outputs,
     # Add the conditioning.
     conv_gate += layers.conv2d(
         conditioning, num_outputs=num_outputs2*2, rate=rate, kernel_size=1,
-        activation_fn=None, normalizer_params=None, scope=scope + '/sclr_cond')
+        activation_fn=None, normalizer_params=None, scope=scope + '/cur_cond')
 
     with tf.name_scope(scope + '/activation'):
         conv = tf.nn.tanh(conv_gate[:, :, :num_outputs2], name='conv')
@@ -136,16 +136,16 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
     inputs, user, alignment, lf0 = inputs
 
     with tf.variable_scope('conditioning'):
-        lang_cond = tf.one_hot(alignment, depth=opts.n_phones,
+        conditioning = tf.one_hot(alignment, depth=opts.n_phones,
                                   name='align_onehot')
-        lang_cond = tf.reshape(
-            lang_cond, (opts.n_chunks, -1, opts.n_phones*opts.context))
-        lf0 = tf.reshape(lf0, (opts.n_chunks, -1, 1))
+        conditioning = tf.reshape(
+            conditioning, (opts.n_chunks, -1, opts.n_phones*opts.context))
         if user is not None:
             user = tf.one_hot(user, depth=opts.n_users, name='user_onehot')
-            conditioning = tf.concat((user, lf0), axis=2, name='cat_lf0')
-        else:
-            conditioning = lf0
+            conditioning = tf.concat([user, conditioning], axis=2,
+                                     name='cat_user')
+        lf0 = tf.reshape(lf0, (opts.n_chunks, -1, 1))
+        conditioning = tf.concat((conditioning, lf0), axis=2, name='cat_lf0')
 
     # The arg_scope below will apply to all convolutions, including the ones
     # in wavenet_block().
@@ -165,9 +165,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         for i_block, block_dilations in enumerate(opts.dilations):
             for rate in block_dilations:
                 block_rate = "block_{}/rate_{}".format(i_block, rate)
-                x_cond = tf.concat((x, lang_cond), axis=2, name=block_rate+'_xcat')
                 xpad = padded(
-                    new_x=x_cond, pad=rate*(opts.kernel_size-1),
+                    new_x=x, pad=rate*(opts.kernel_size-1),
                     reuse=pad_reuse, n_chunks=opts.n_chunks,
                     reverse=opts.reverse, data_format=data_format,
                     scope=block_rate+"/pad"+extra_pad_scope)
@@ -185,18 +184,20 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
 
     with arg_scope([layers.conv2d], kernel_size=1, reuse=reuse,
                    data_format=data_format):
-        ms = layers.conv2d(
+        x = layers.conv2d(
             skip_connections, num_outputs=opts.skip_dimension,  # ?
             activation_fn=tf.nn.relu, scope='output_layer1')
         mfcc = layers.conv2d(
-            skip_connections, num_outputs=opts.skip_dimension,   # ?
+            x, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
-        ms = layers.conv2d(ms, num_outputs=2, normalizer_params=None,
-                           activation_fn=None, scope='output_layer2')
+        x = layers.conv2d(
+            x, num_outputs=2,
+            normalizer_params=None,
+            activation_fn=None, scope='output_layer2')
         mfcc = layers.conv2d(
             mfcc, num_outputs=opts.n_mfcc, normalizer_params=None,
             activation_fn=None, scope='mfcc_layer2')
-    return ms, mfcc
+    return x, mfcc
 
 
 def compute_overlap(opts):

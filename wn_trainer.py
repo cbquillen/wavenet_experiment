@@ -77,7 +77,7 @@ opts.context = 3      # 2 == biphone, 3 == triphone.
 opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
-opts.mfcc_weight = 0.001
+opts.mfcc_weight = 0.01
 opts.future_weight = 0.01
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
@@ -134,7 +134,8 @@ with tf.name_scope("loss"):
     label_range = slice(1, 1+opts.audio_chunk_size)
     x = orig_batch[:, label_range]
     delta2 = 0.5*(x - mu)*i_s
-    loss = tf.reduce_mean(-tf.log(i_s) + tf.log(tf.exp(delta2) + tf.exp(-delta2)))
+    loss = tf.reduce_mean(-tf.log(i_s) +
+                          tf.log(tf.exp(delta2) + tf.exp(-delta2)))
 
     tf.summary.scalar(name="loss", tensor=loss)
 
