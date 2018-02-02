@@ -191,7 +191,7 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             x, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
         x = layers.conv2d(
-            x, num_outputs=2,
+            x, num_outputs=opts.n_logits*3,
             normalizer_params=None,
             activation_fn=None, scope='output_layer2')
         mfcc = layers.conv2d(

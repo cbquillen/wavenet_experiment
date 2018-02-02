@@ -16,7 +16,6 @@ from operator import mul
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from audio_reader import AudioReader
-from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet, compute_overlap
 
 # Options from the command line:
@@ -49,9 +48,6 @@ parser.add_option('-O', '--lr_offset', dest='lr_offset', type=int, default=0,
 parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
                   action='store_true', default=False,
                   help='Do histogram summaries')
-parser.add_option('-b', '--batch_norm', dest='batch_norm',
-                  action='store_true', default=False,
-                  help='Do batch normalization')
 
 opts, cmdline_args = parser.parse_args()
 
@@ -59,29 +55,27 @@ opts, cmdline_args = parser.parse_args()
 opts.canonical_epoch_size = 5000.0
 opts.n_chunks = 10           # How many utterance chunks to train at once.
 opts.input_kernel_size = 64  # The size of the input layer kernel.
-opts.kernel_size = 4        # The size of other kernels.
+opts.kernel_size = 4         # The size of other kernels.
 opts.num_outputs = 128       # The number of convolutional channels.
 opts.num_outputs2 = opts.num_outputs  # The "inner" convolutional channels.
-opts.skip_dimension = 512   # The dimension for skip connections.
+opts.skip_dimension = 512    # The dimension for skip connections.
 opts.dilations = [[2**N for N in range(8)]] * 5
-opts.epsilon = 1e-4      # Adams optimizer epsilon.
+opts.epsilon = 1e-4          # Adams optimizer epsilon.
 opts.max_steps = 400000
 opts.sample_rate = 16000
-opts.quantization_channels = 256
-opts.one_hot_input = True
 opts.max_checkpoints = 30
-opts.clip = 0.1
-opts.which_future = 1  # Iterate prediction this many times.
 opts.reverse = False  # not used in this version..
+opts.clip = 0.1
 opts.context = 3      # 2 == biphone, 3 == triphone.
 opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
 opts.mfcc_weight = 0.01
-opts.future_weight = 0.01
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
-opts.feature_noise = 0.0
+opts.n_logits = 2       # The number of logits in the output pdf mixture.
+
+assert opts.n_logits >= 1
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
@@ -96,11 +90,9 @@ sess = tf.Session()
 
 coord = tf.train.Coordinator()  # Is this used for anything?
 
-overlap = opts.which_future-1
-
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    chunk_size=opts.audio_chunk_size,
-                   overlap=overlap, reverse=False,
+                   overlap=0, reverse=False,
                    silence_threshold=opts.silence_threshold,
                    n_chunks=opts.n_chunks, queue_size=opts.n_chunks,
                    n_mfcc=opts.n_mfcc, context=opts.context)
@@ -115,11 +107,7 @@ with tf.name_scope("input_massaging"):
         data.dequeue(num_elements=opts.n_chunks)
 
     orig_batch = batch
-    if opts.one_hot_input:
-        encoded_batch = mu_law_encode(batch, opts.quantization_channels)
-        batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
-    else:
-        batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
+    batch = tf.expand_dims(batch, -1)
 
     wf_slice = slice(0, opts.audio_chunk_size)
     in_user = user[:, wf_slice] if opts.n_users > 1 else None
@@ -127,44 +115,28 @@ with tf.name_scope("input_massaging"):
     ms, omfcc = wavenet(
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
-    mu = ms[:, :, 0]
-    i_s = abs(ms[:, :, 1])+1e-5
 
 with tf.name_scope("loss"):
+    # unpack outputs
+    n = opts.n_logits
+    mu = ms[:, :, :n]
+    i_s = tf.abs(ms[:, :, n:n*2]) + 1.0
+    mix_logits = ms[:, :, n*2:]
+    # To control logit magnitude:
+    logit_loss = 0.1*tf.reduce_mean(mix_logits*mix_logits)
+    mix_weight = tf.nn.softmax(mix_logits)
+
     label_range = slice(1, 1+opts.audio_chunk_size)
-    x = orig_batch[:, label_range]
-    delta2 = 0.5*(x - mu)*i_s
-    loss = tf.reduce_mean(-tf.log(i_s) +
-                          tf.log(tf.exp(delta2) + tf.exp(-delta2)))
+    x = batch[:, label_range, :]
+    mdelta = -tf.abs(x - mu)*i_s
+    log_pmix = tf.log(mix_weight*i_s) + mdelta - \
+        2.0*tf.log(1.0 + tf.exp(mdelta))
+    scale = tf.reduce_max(log_pmix, axis=2)
+    scaled_pmix = tf.exp(log_pmix - tf.expand_dims(scale, -1))
+    loss = tf.reduce_mean(-tf.log(tf.reduce_sum(scaled_pmix, axis=2)) - scale)
 
+if opts.logdir is not None:
     tf.summary.scalar(name="loss", tensor=loss)
-
-future_loss = tf.constant(0.0)
-for i in xrange(1, opts.which_future):
-    with tf.name_scope('future_'+str(i)):
-
-        if opts.one_hot_input:
-            next_input = tf.nn.softmax(tf.one_hot(
-                mu_law_encode(mu, opts.quantization_channels)))
-        else:
-            # Maybe we should sample here...
-            next_input = tf.reshape(mu, shape=(opts.n_chunks, -1, 1))
-        wf_slice = slice(i, i+opts.audio_chunk_size)
-        in_user = user[:, wf_slice] if opts.n_users > 1 else None
-        ms, _ = wavenet(
-            (next_input, in_user, alignment[:, wf_slice], lf0[:, wf_slice]),
-            opts, reuse=True, pad_reuse=False, extra_pad_scope=str(i),
-            is_training=opts.base_learning_rate > 0)
-        mu = ms[:, :, 0]
-        label_range = slice(i+1, i+1+opts.audio_chunk_size)
-        delta = mu - orig_batch[:, label_range]
-        future_loss += tf.reduce_mean(
-            delta*delta/(tf.abs(orig_batch[:, label_range]) + 0.0039))
-
-if opts.which_future > 1:
-    future_loss /= opts.which_future - 1
-
-tf.summary.scalar(name="future_loss", tensor=future_loss)
 
 # That should have created all training variables.  Now we can make a saver.
 saver = tf.train.Saver(tf.trainable_variables() +
@@ -172,22 +144,23 @@ saver = tf.train.Saver(tf.trainable_variables() +
                        max_to_keep=opts.max_checkpoints)
 
 if opts.histogram_summaries:
-    tf.summary.histogram(name="wavenet", values=wavenet_out)
+    tf.summary.histogram(name="wavenet", values=ms)
     layers.summaries.summarize_variables()
 
-reg_loss = 0
+reg_loss = logit_loss
 
 with tf.name_scope("mfcc_loss"):
     mfcc_loss = tf.constant(0.0)
     if opts.mfcc_weight > 0:
-        del_mfcc = mfcc[:, overlap:, :]-omfcc
+        del_mfcc = mfcc - omfcc
         mfcc_loss = tf.reduce_mean(del_mfcc*del_mfcc)
 
-        tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
+        if opts.logdir is not None:
+            tf.summary.scalar(name='mfcc', tensor=mfcc_loss)
 
 with tf.name_scope("reg_loss"):
     if 'l2reg' in vars(opts):
-        reg_loss = sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+        reg_loss += sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
 
 learning_rate = tf.placeholder(tf.float32, shape=())
 # adams_epsilon probably should be reduced near the end of training.
@@ -202,8 +175,7 @@ if opts.base_learning_rate > 0:
                                            epsilon=adams_epsilon)
         with tf.get_default_graph().control_dependencies(
                 tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-            sum_loss = loss + opts.future_weight*future_loss + \
-                opts.mfcc_weight*mfcc_loss + reg_loss
+            sum_loss = loss + opts.mfcc_weight*mfcc_loss + reg_loss
             if opts.clip is not None:
                 gradients = optimizer.compute_gradients(
                     sum_loss, var_list=tf.trainable_variables())
@@ -218,7 +190,8 @@ if opts.base_learning_rate > 0:
 else:
     minimize = tf.constant(0)   # a noop.
 
-summaries = tf.summary.merge_all()
+if opts.logdir is not None:
+    summaries = tf.summary.merge_all()
 
 init = tf.global_variables_initializer()
 
@@ -256,21 +229,19 @@ for global_step in xrange(opts.lr_offset, opts.max_steps):
              -global_step/opts.canonical_epoch_size/5.0)
 
     if (global_step + 1) % opts.summary_rate == 0 and opts.logdir is not None:
-        cur_loss, cur_future_loss, cur_mfcc_loss, summary_pb = sess.run(
-            [loss, future_loss, mfcc_loss, summaries, minimize],
+        cur_loss, cur_mfcc_loss, summary_pb = sess.run(
+            [loss, mfcc_loss, summaries, minimize],
             feed_dict={learning_rate: cur_lr,
-                       adams_epsilon: opts.epsilon})[0:4]
+                       adams_epsilon: opts.epsilon})[0:3]
         summary_writer.add_summary(summary_pb, global_step)
     else:
-        cur_loss, cur_future_loss, cur_mfcc_loss = sess.run(
-                            [loss, future_loss, mfcc_loss, minimize],
+        cur_loss, cur_mfcc_loss = sess.run(
+                            [loss, mfcc_loss, minimize],
                             feed_dict={learning_rate: cur_lr,
-                                       adams_epsilon: opts.epsilon})[0:3]
+                                       adams_epsilon: opts.epsilon})[0:2]
     new_time = time.time()
-    print(("loss[{}]: {:.3f} future {:.3f}" +
-          " mfcc {:.3f} dt {:.3f} lr {:.4g}").format(
-                global_step, cur_loss, cur_future_loss,
-                cur_mfcc_loss, new_time - last_time, cur_lr))
+    print(("loss[{}]: {:.3f} mfcc {:.3f} dt {:.3f} lr {:.4g}").format(
+          global_step, cur_loss, cur_mfcc_loss, new_time - last_time, cur_lr))
     last_time = new_time
 
     if (global_step + 1) % opts.checkpoint_rate == 0 and \
