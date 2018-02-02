@@ -36,6 +36,8 @@ parser.add_option('-b', '--batch_norm', dest='batch_norm',
                   help='Do batch normalization')
 parser.add_option("-c", '--cpu', default=False, dest='use_cpu',
                   action='store_true', help='Set to run on CPU.')
+parser.add_option('-A', '--analog_out', dest='analog_out',
+                  action='store_true', help='Save the analog network output')
 
 opts, cmdline_args = parser.parse_args()
 
@@ -100,23 +102,14 @@ pLf0 = tf.placeholder(tf.float32, shape=(1, 1), name='lf0')
 
 with tf.name_scope("Generate"):
     # for zeroizing:
-    out, _ = wavenet([last_sample, user, pPhone, pLf0], opts,
+    ms, _ = wavenet([last_sample, user, pPhone, pLf0], opts,
                      is_training=False)
-    out = tf.nn.softmax(out)
-
-    max_likeli_sample = tf.reshape(
-        mu_law_decode(tf.argmax(out, axis=2), opts.quantization_channels), ())
-
-    # Sample from the output distribution to feed back into the input:
-    pick = tf.cumsum(out, axis=2)
-    select = tf.random_uniform(shape=())
-    x = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
-    if opts.one_hot_input:
-        out = tf.one_hot(x, depth=opts.quantization_channels)
-    else:
-        gen_sample = tf.reshape(
-            mu_law_decode(x, opts.quantization_channels), ())
-        out = tf.reshape(gen_sample, (1, 1, 1))
+    mu = ms[:, :, 0]
+    i_s = tf.abs(ms[:, :, 1]) + 1e-5
+    x = tf.random_uniform(tf.shape(mu))*0.9999 + 0.0001
+    sample = tf.log(x/(1.0-x))/i_s + mu
+    sample = tf.expand_dims(tf.clip_by_value(sample, -1.0, 1.0), -1)
+    max_likeli_sample = tf.reshape(mu, ())
 
 saver = tf.train.Saver(tf.trainable_variables() +
                        tf.get_collection('batch_norm'))
@@ -162,7 +155,7 @@ last_time = time.time()
 for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
                                           opts.sample_rate, opts.context):
     output, prev_out = sess.run(
-        fetches=[max_likeli_sample, out],
+        fetches=[max_likeli_sample, sample],
         feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,
                    pLf0: iLf0})
     samples.append(output)

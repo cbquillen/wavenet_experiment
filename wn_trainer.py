@@ -17,7 +17,7 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from audio_reader import AudioReader
 from ops import mu_law_encode, mu_law_decode
-from wavenet import wavenet, wavenet_unpadded, compute_overlap
+from wavenet import wavenet, compute_overlap
 
 # Options from the command line:
 parser = optparse.OptionParser()
@@ -49,9 +49,6 @@ parser.add_option('-O', '--lr_offset', dest='lr_offset', type=int, default=0,
 parser.add_option('-H', '--histogram_summaries', dest='histogram_summaries',
                   action='store_true', default=False,
                   help='Do histogram summaries')
-parser.add_option('-b', '--batch_norm', dest='batch_norm',
-                  action='store_true', default=False,
-                  help='Do batch normalization')
 
 opts, cmdline_args = parser.parse_args()
 
@@ -59,25 +56,26 @@ opts, cmdline_args = parser.parse_args()
 opts.canonical_epoch_size = 5000.0
 opts.n_chunks = 10           # How many utterance chunks to train at once.
 opts.input_kernel_size = 64  # The size of the input layer kernel.
-opts.kernel_size = 4        # The size of other kernels.
+opts.kernel_size = 4         # The size of other kernels.
 opts.num_outputs = 128       # The number of convolutional channels.
 opts.num_outputs2 = opts.num_outputs  # The "inner" convolutional channels.
-opts.skip_dimension = 512   # The dimension for skip connections.
+opts.skip_dimension = 512    # The dimension for skip connections.
 opts.dilations = [[2**N for N in range(8)]] * 5
-opts.epsilon = 1e-4      # Adams optimizer epsilon.
+opts.epsilon = 1e-4          # Adams optimizer epsilon.
 opts.max_steps = 400000
 opts.sample_rate = 16000
 opts.quantization_channels = 256
 opts.one_hot_input = True
 opts.max_checkpoints = 30
-opts.clip = None
+opts.clip = 0.1
 opts.which_future = 1  # Iterate prediction this many times.
-opts.reverse = False  # not used in this version..
-opts.context = 3      # 2 == biphone, 3 == triphone.
+opts.reverse = False   # not used in this version..
+opts.context = 3       # 2 == biphone, 3 == triphone.
 opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
-opts.mfcc_weight = 0.001
+opts.mfcc_weight = 0.01
+opts.future_weight = 0.01
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
 opts.feature_noise = 0.0
@@ -95,11 +93,7 @@ sess = tf.Session()
 
 coord = tf.train.Coordinator()  # Is this used for anything?
 
-if opts.nopad:
-    overlap = compute_overlap(opts) + opts.which_future-1
-    wavenet = wavenet_unpadded
-else:
-    overlap = opts.which_future-1
+overlap = opts.which_future-1
 
 data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
                    chunk_size=opts.audio_chunk_size,
@@ -117,16 +111,9 @@ with tf.name_scope("input_massaging"):
     batch, user, alignment, lf0, mfcc = \
         data.dequeue(num_elements=opts.n_chunks)
 
-    # We will try to predict the encoded_batch, which is a quantized version
-    # of the input.  Except if we are adding noise.
     orig_batch = batch
-    if opts.feature_noise > 0:
-        labels = mu_law_encode(batch, opts.quantization_channels)
-        batch += tf.random_normal(tf.shape(batch), stddev=opts.feature_noise)
-    encoded_batch = mu_law_encode(batch, opts.quantization_channels)
-    if opts.feature_noise <= 0:
-        labels = encoded_batch
     if opts.one_hot_input:
+        encoded_batch = mu_law_encode(batch, opts.quantization_channels)
         batch = tf.one_hot(encoded_batch, depth=opts.quantization_channels)
     else:
         batch = tf.reshape(batch, (opts.n_chunks, -1, 1))
@@ -134,41 +121,45 @@ with tf.name_scope("input_massaging"):
     wf_slice = slice(0, opts.audio_chunk_size)
     in_user = user[:, wf_slice] if opts.n_users > 1 else None
 
-    wavenet_out, omfcc = wavenet(
+    ms, omfcc = wavenet(
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
+    mu = ms[:, :, 0]
+    i_s = tf.abs(ms[:, :, 1])+1e-5
 
 with tf.name_scope("loss"):
-    loss = tf.reduce_mean(
-        tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits=wavenet_out,
-            labels=labels[:, 1:1+opts.audio_chunk_size]))
+    label_range = slice(1, 1+opts.audio_chunk_size)
+    x = orig_batch[:, label_range]
+    mdelta = -tf.abs(x - mu)*i_s
+    loss = tf.reduce_mean(-tf.log(i_s) - mdelta
+                          + 2.0*tf.log(1.0 + tf.exp(mdelta)))
 
     tf.summary.scalar(name="loss", tensor=loss)
 
 future_loss = tf.constant(0.0)
 for i in xrange(1, opts.which_future):
     with tf.name_scope('future_'+str(i)):
+
         if opts.one_hot_input:
-            next_input = tf.nn.softmax(wavenet_out)
+            next_input = tf.nn.softmax(tf.one_hot(
+                mu_law_encode(mu, opts.quantization_channels)))
         else:
-            # Should really sample instead of arg_max...
-            next_input = tf.reshape(tf.arg_max(wavenet_out, dimension=2),
-                                    shape=(opts.n_chunks, -1, 1))
-            next_input = mu_law_decode(
-                next_input, opts.quantization_channels)
+            # Maybe we should sample here...
+            next_input = tf.reshape(mu, shape=(opts.n_chunks, -1, 1))
         wf_slice = slice(i, i+opts.audio_chunk_size)
         in_user = user[:, wf_slice] if opts.n_users > 1 else None
-        wavenet_out, _ = wavenet(
+        ms, _ = wavenet(
             (next_input, in_user, alignment[:, wf_slice], lf0[:, wf_slice]),
             opts, reuse=True, pad_reuse=False, extra_pad_scope=str(i),
             is_training=opts.base_learning_rate > 0)
-
-        max_likeli = mu_law_decode(tf.argmax(wavenet_out, axis=2),
-                                   opts.quantization_channels)
+        mu = ms[:, :, 0]
         label_range = slice(i+1, i+1+opts.audio_chunk_size)
-        future_loss += tf.reduce_sum(
-            tf.abs(max_likeli-orig_batch[:, label_range]))
+        delta = mu - orig_batch[:, label_range]
+        future_loss += tf.reduce_mean(
+            delta*delta/(tf.abs(orig_batch[:, label_range]) + 0.0039))
+
+if opts.which_future > 1:
+    future_loss /= opts.which_future - 1
 
 tf.summary.scalar(name="future_loss", tensor=future_loss)
 
@@ -208,13 +199,14 @@ if opts.base_learning_rate > 0:
                                            epsilon=adams_epsilon)
         with tf.get_default_graph().control_dependencies(
                 tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-            sum_loss = loss + future_loss + \
+            sum_loss = loss + opts.future_weight*future_loss + \
                 opts.mfcc_weight*mfcc_loss + reg_loss
             if opts.clip is not None:
                 gradients = optimizer.compute_gradients(
                     sum_loss, var_list=tf.trainable_variables())
                 clipped_gradients = [
-                    (tf.clip_by_value(var, -opts.clip, opts.clip), name)
+                    (tf.clip_by_value(var, -opts.clip, opts.clip)
+                        if var is not None else None, name)
                     for var, name in gradients]
                 minimize = optimizer.apply_gradients(clipped_gradients)
             else:
