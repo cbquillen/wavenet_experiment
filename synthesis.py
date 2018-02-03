@@ -48,6 +48,7 @@ opts.n_phones = 41
 opts.n_users = 1
 opts.context = 3      # 2 == biphone, 3 == triphone
 opts.n_mfcc = 20
+opts.n_logits = 2
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
@@ -89,10 +90,8 @@ def align_iterator(input_alignments, sample_rate, context):
                     yield (user_id, frame_labels[i:i+1, :],
                            frame_lf0[i:i+1].reshape(1, 1))
 
-input_dim = opts.quantization_channels if opts.one_hot_input else 1
+input_dim = 1
 prev_out = np.zeros((1, 1, input_dim), dtype=np.float32)
-if opts.one_hot_input:
-    prev_out[0, 0, opts.quantization_channels/2] = 1
 last_sample = tf.placeholder(tf.float32, shape=(1, 1, input_dim),
                              name='last_sample')
 pUser = tf.placeholder(tf.int32, shape=(1, 1), name='user')
@@ -103,13 +102,23 @@ pLf0 = tf.placeholder(tf.float32, shape=(1, 1), name='lf0')
 with tf.name_scope("Generate"):
     # for zeroizing:
     ms, _ = wavenet([last_sample, user, pPhone, pLf0], opts,
-                     is_training=False)
-    mu = ms[:, :, 0]
-    i_s = tf.abs(ms[:, :, 1]) + 1e-5
+                    is_training=False)
+    n = opts.n_logits
+    mu = ms[:, :, :n]
+    i_s = tf.abs(ms[:, :, n:n*2]) + 1.0
+    mix_logits = ms[:, :, n*2:]
+
+    # randomly pick one of the mixtures, with p given by the mixture weights.
+    select = tf.random_uniform(shape=())
+    pick = tf.cumsum(tf.nn.softmax(mix_logits), axis=2)
+    which = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
+    mu = tf.gather_nd(tf.transpose(mu, (2, 0, 1)), which)
+    i_s = tf.gather_nd(tf.transpose(i_s, (2, 0, 1)), which)
+
+    # Now sample:
     x = tf.random_uniform(tf.shape(mu))*0.9999 + 0.0001
     sample = tf.log(x/(1.0-x))/i_s + mu
-    sample = tf.expand_dims(tf.clip_by_value(sample, -1.0, 1.0), -1)
-    max_likeli_sample = tf.reshape(mu, ())
+    sample = tf.clip_by_value(sample, -1.0, 1.0)
 
 saver = tf.train.Saver(tf.trainable_variables() +
                        tf.get_collection('batch_norm'))
@@ -122,12 +131,7 @@ with tf.name_scope("Zeroize_state"):
     zalign = tf.constant(opts.silence_phone, dtype=tf.int32,
                          shape=(1, initial_zeros, opts.context))
     zLf0 = tf.zeros((1, initial_zeros), dtype=tf.float32)
-    if opts.one_hot_input:
-        zero = tf.constant(value=opts.quantization_channels/2,
-                           shape=(1, initial_zeros))
-        zero = tf.one_hot(zero, depth=opts.quantization_channels)
-    else:
-        zero = tf.constant(value=0.0, shape=(1, initial_zeros, 1))
+    zero = tf.constant(value=0.0, shape=(1, initial_zeros, 1))
     zeroize, _ = wavenet([zero, zuser, zalign, zLf0], opts,
                          reuse=True, pad_reuse=True, is_training=False)
 
@@ -154,11 +158,11 @@ samples = []
 last_time = time.time()
 for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
                                           opts.sample_rate, opts.context):
-    output, prev_out = sess.run(
-        fetches=[max_likeli_sample, sample],
+    prev_out = sess.run(
+        fetches=sample,
         feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,
                    pLf0: iLf0})
-    samples.append(output)
+    samples.append(prev_out[0, 0, 0])
     if len(samples) % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(len(samples) + 1,
