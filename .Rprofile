@@ -12,6 +12,12 @@ comp <- function(o1='o1', o2='o2') {
     plot(x1, xlim=range(x1$x, x2$x), ylim=range(x1$y, x2$y), type='l', log='xy')
     lines(x2, col='red')
 }
+compx <- function(o1='o1', o2='o2') {
+    x1 = tail(as.data.frame(ldat(o1)), -1000)
+    x2 = tail(as.data.frame(ldat(o2)), -1000)
+    plot(x1, xlim=range(x1$x, x2$x), ylim=range(x1$y, x2$y), type='l', log='x')
+    lines(x2, col='red')
+}
 
 #c2 <- function() {
 #    x1 = tail(as.data.frame(ldat('o1')), -1000)
