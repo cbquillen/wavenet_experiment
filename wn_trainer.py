@@ -70,9 +70,10 @@ opts.context = 3      # 2 == biphone, 3 == triphone.
 opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
-opts.mfcc_weight = 0.01
+opts.mfcc_weight = 0.001
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
+opts.feature_noise = 1e-6
 
 
 # Set opts.* parameters from a parameter file if you want:
@@ -104,28 +105,27 @@ with tf.name_scope("input_massaging"):
     batch, user, alignment, lf0, mfcc = \
         data.dequeue(num_elements=opts.n_chunks)
 
+    # We will try to predict the batch from a slightly
+    # noisier version on the input.
     orig_batch = batch
+    if opts.feature_noise > 0:
+        batch += tf.random_normal(tf.shape(batch), stddev=opts.feature_noise)
+
     batch = tf.expand_dims(batch, -1)
 
     wf_slice = slice(0, opts.audio_chunk_size)
     in_user = user[:, wf_slice] if opts.n_users > 1 else None
 
-    ms, omfcc = wavenet(
+    mu, r, q, omfcc = wavenet(
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
 
 with tf.name_scope("loss"):
-    # unpack outputs
-    mu = ms[:, :, 0]
-    a = tf.abs(ms[:, :, 1]) + 1.0
-    b = tf.abs(ms[:, :, 2])
-    r = a+b
-    q = a-b
     label_range = slice(1, 1+opts.audio_chunk_size)
     x = orig_batch[:, label_range]
     delta = x - mu
     the_exp = -r*tf.abs(delta) + q*delta
-    loss = tf.reduce_mean(-tf.log(0.5*(r*r-q*q)/r) - the_exp)
+    loss = tf.reduce_mean(-tf.log(0.5*(r-q*q/r)) - the_exp)
 
 if opts.logdir is not None:
     tf.summary.scalar(name="loss", tensor=loss)
