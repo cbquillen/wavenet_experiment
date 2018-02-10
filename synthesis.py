@@ -17,7 +17,6 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 import librosa
 from tensorflow.contrib.framework import arg_scope
-from ops import mu_law_encode, mu_law_decode
 from wavenet import wavenet, compute_overlap
 
 parser = optparse.OptionParser()

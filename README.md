@@ -3,6 +3,8 @@
 Playing with a quick reimplementation of ibab's wavenet.  You may want to
 have a look at the readme in [ibab's repo](https://github.com/ibab/tensorflow-wavenet)
 
+This version uses a single asymmetric Laplace distribution to model the output distribution.
+
 - requirements:
   - Tensorflow >= 1.0
   - [librosa](https://github.com/librosa/librosa) for audio.
@@ -10,28 +12,31 @@ have a look at the readme in [ibab's repo](https://github.com/ibab/tensorflow-wa
 - Training:  wn_trainer.py
 - Generation: synthesis.py
 
-Training corpus:
+Training corpora:
    [CMU arctic](http://www.festvox.org/cmu_arctic/) (around 115Mb)
+   [VCTK corpus](http://homepages.inf.ed.ac.uk/jyamagis/page3/page58/page58.html) (around 10.4GB, [Alternative host](http://www.udialogue.org/download/cstr-vctk-corpus.html))
+
 
 with CMU arctic slt and the default parameters, one epoch of training is about
 11000 steps.  You will need to wait ~30 epochs or so before things start to
 sound OK in generation.
 
-Surprisingly, even though CMU artic is very small, I get better results training
-with it than with the much bigger VCTK corpus.  I'm not sure why.
+The VCTK corpus can also be used for training.  I get reasonable results training on a 10-speaker subset of the corpus, for which I supply phoneme labels.
 
 To run this:
 
 ```sh
-$ ./wn_trainer.py -l {logdir} -o {checkpoint-file} -d {training_database}
+$ ./wn_trainer.py -l {logdir} -o {checkpoint-file} -d {training_database} -a {audio_root_dir}
 ```
 The training database is a simple text file. It contains lines of the form
 ```
     {filename} user# : context#1_phone#1 .. context#N_phone#1 ... context#1_phone#M ... context#N_phone#M : log_f0#1 ... log_F0#N
 ```
+The {filename} is the audio .wav file.  It is specified relative to {audio_root_dir}.
+
 the phone labels are at 100/second.  The log_f0 labels are the same rate.
-I provide a sample database for slt via the file 'slt_trn.txt' and 'slt_tst.txt'.
-You will probably have to change the path names in those files.
+I provide a sample database for slt via the files 'slt_trn.txt' and 'slt_tst.txt'.
+I also provide a sample database for a subset of VCTK via vctk_low_subset.txt.
 
 then after training a while:
 
@@ -44,7 +49,7 @@ supplied in it is ignored during generation.
 With the default parameters you can run on a 4Gb NVidia GTX-1050-ti.
 With the defaults, it takes ~0.45 seconds per minibatch in training
 on that card.  On a GTX 1080-ti it's about 0.13 seconds per minibatch.
-CPU-only generation runs at about 150 samples per second on my Core i-5 6600K.
+CPU-only generation runs at about 125 samples per second on my Core i-5 6600K.
 You will probably want to train a minimum of 400000 steps, which will take
 about 14 hours on the GTX 1080-ti.
 
@@ -59,25 +64,5 @@ I include an example *params.txt* file.  It is executable Python.  You will
 need to suppy a parameter file for generation.  Generally you should
 use the same one that you used in training.
 
-### Advantages over the ibab setup
-
-- Uses phoneme and lf0 labels in conditional training.
-- Simpler code. Generation is the same code as training.
-- Batch normalization is an option.
-- l2 regularization is an option
-- dropout is an option.  Turning it on for an initial pass of training may be a
-  good idea.
-- either one-hot or scalar input features, both in generation and training.
-  - scalar input produces lower cross-entropy, but 1-hot sounds better so far.
-- You can train looking more than one sample into the future (last time I checked)
-- I get better accuracy and faster convergence, at least last time I compared.
-- You can use N-point à trous convolutions in generation.
-- You can train a temporally-reversed model (probably needs to be updated.)
-- Last I checked, ibab's setup changes the audio chunk size with different
-  batches.  Doing this slows things down dramatically.  Because I carry
-  context across chunks I can use constant chunk sizes without overlap.
-
-There are of course some disadvantages too.
-
-Here is an output sample: [sample_output.wav](http://github.com/cbquillen/wavenet_experiment/blob/biphone/sample_output.wav)
+Here is an output sample: [sample_output.wav](http://github.com/cbquillen/wavenet_experiment/blob/2-sided-laplace/sample_output.wav)
 

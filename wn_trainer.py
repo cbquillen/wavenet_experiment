@@ -24,6 +24,8 @@ parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
 parser.add_option('-l', '--logdir', dest='logdir',
                   default=None, help='Tensorflow event logdir')
+parser.add_option('-a', '--audio_root_dir', default='.',
+                  help='Root directory for the training audio.')
 parser.add_option('-i', '--input_file', dest='input_file',
                   default=None, help='Input checkpoint file')
 parser.add_option('-o', '--output_file', dest='output_file',
@@ -89,7 +91,8 @@ sess = tf.Session()
 
 coord = tf.train.Coordinator()  # Is this used for anything?
 
-data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
+data = AudioReader(opts.audio_root_dir, opts.data_list, coord,
+                   sample_rate=opts.sample_rate,
                    chunk_size=opts.audio_chunk_size,
                    overlap=0, reverse=False,
                    silence_threshold=opts.silence_threshold,

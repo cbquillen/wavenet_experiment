@@ -7,7 +7,8 @@ import numpy as np
 import tensorflow as tf
 
 
-def load_audio_alignments(alignment_list_file, sample_rate, context):
+def load_audio_alignments(audio_root_dir, alignment_list_file,
+                          sample_rate, context):
     '''Load the audio waveforms and alignments from a list file.
        The file format is
        wav_path user_# : phone#_1 ... phone#_N : log_f0_1 .. log_f0_N
@@ -24,7 +25,7 @@ def load_audio_alignments(alignment_list_file, sample_rate, context):
     with open(alignment_list_file) as f:
         for line in f:
             a = line.rstrip().split()
-            path = a.pop(0)
+            path = os.path.join(audio_root_dir, a.pop(0))
             user = int(a.pop(0))
             if user >= iuser:
                 iuser = user+1
@@ -102,7 +103,7 @@ class AudioReader(object):
     '''Generic background audio reader that preprocesses audio files
     and enqueues them into a TensorFlow queue.'''
 
-    def __init__(self, alignment_list_file, coord, sample_rate,
+    def __init__(self, audio_root_dir, alignment_list_file, coord, sample_rate,
                  chunk_size, overlap=0, reverse=False, silence_threshold=None,
                  n_chunks=5, queue_size=5, n_mfcc=12, context=2):
 
@@ -135,7 +136,8 @@ class AudioReader(object):
                                            self.mfcc_placeholder])
 
         self.files, self.alignments, self.n_users, self.n_phones = \
-            load_audio_alignments(alignment_list_file, sample_rate, context)
+            load_audio_alignments(audio_root_dir, alignment_list_file,
+                                  sample_rate, context)
 
     def dequeue(self, num_elements):
         output = self.queue.dequeue_many(num_elements)
