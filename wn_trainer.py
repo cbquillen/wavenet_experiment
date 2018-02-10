@@ -24,6 +24,8 @@ parser.add_option('-p', '--param_file', dest='param_file',
                   default=None, help='File to set parameters')
 parser.add_option('-l', '--logdir', dest='logdir',
                   default=None, help='Tensorflow event logdir')
+parser.add_option('-a', '--audio_root_dir', default='.',
+                  help='Root directory for the training audio.')
 parser.add_option('-i', '--input_file', dest='input_file',
                   default=None, help='Input checkpoint file')
 parser.add_option('-o', '--output_file', dest='output_file',
@@ -70,9 +72,10 @@ opts.context = 3      # 2 == biphone, 3 == triphone.
 opts.n_phones = 41
 opts.n_users = 1
 opts.n_mfcc = 20
-opts.mfcc_weight = 0.01
+opts.mfcc_weight = 0.001
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
+opts.feature_noise = 1e-6
 opts.n_logits = 2       # The number of logits in the output pdf mixture.
 
 assert opts.n_logits >= 1
@@ -90,7 +93,8 @@ sess = tf.Session()
 
 coord = tf.train.Coordinator()  # Is this used for anything?
 
-data = AudioReader(opts.data_list, coord, sample_rate=opts.sample_rate,
+data = AudioReader(opts.audio_root_dir, opts.data_list, coord,
+                   sample_rate=opts.sample_rate,
                    chunk_size=opts.audio_chunk_size,
                    overlap=0, reverse=False,
                    silence_threshold=opts.silence_threshold,
@@ -106,30 +110,30 @@ with tf.name_scope("input_massaging"):
     batch, user, alignment, lf0, mfcc = \
         data.dequeue(num_elements=opts.n_chunks)
 
+    # We will try to predict the batch from a slightly
+    # noisier version on the input.
     orig_batch = batch
+    if opts.feature_noise > 0:
+        batch += tf.random_normal(tf.shape(batch), stddev=opts.feature_noise)
+
     batch = tf.expand_dims(batch, -1)
 
     wf_slice = slice(0, opts.audio_chunk_size)
     in_user = user[:, wf_slice] if opts.n_users > 1 else None
 
-    ms, omfcc = wavenet(
+    mu, r, mix_logits, omfcc = wavenet(
         (batch[:, wf_slice, :], in_user, alignment[:, wf_slice],
          lf0[:, wf_slice]), opts, is_training=opts.base_learning_rate > 0)
 
 with tf.name_scope("loss"):
-    # unpack outputs
-    n = opts.n_logits
-    mu = ms[:, :, :n]
-    i_s = tf.abs(ms[:, :, n:n*2]) + 1.0
-    mix_logits = ms[:, :, n*2:]
     # To control logit magnitude:
     logit_loss = 0.01*tf.reduce_mean(tf.abs(tf.reduce_sum(mix_logits, axis=2)))
     mix_weight = tf.nn.softmax(mix_logits)
 
     label_range = slice(1, 1+opts.audio_chunk_size)
     x = batch[:, label_range, :]
-    mdelta = -tf.abs(x - mu)*i_s
-    log_pmix = tf.log(mix_weight*i_s) + mdelta - \
+    mdelta = -tf.abs(x - mu)*r
+    log_pmix = tf.log(mix_weight*r) + mdelta - \
         2.0*tf.log(1.0 + tf.exp(mdelta))
     scale = tf.reduce_max(log_pmix, axis=2)
     scaled_pmix = tf.exp(log_pmix - tf.expand_dims(scale, -1))

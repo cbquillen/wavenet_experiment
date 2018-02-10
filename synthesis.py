@@ -49,6 +49,7 @@ opts.n_users = 1
 opts.context = 3      # 2 == biphone, 3 == triphone
 opts.n_mfcc = 20
 opts.n_logits = 2
+opts.sample_skip = 0.01       # Uniform sample from (this, 1-this).
 
 # Further options *must* come from a parameter file.
 # TODO: add checks that everything is defined.
@@ -100,25 +101,27 @@ pPhone = tf.placeholder(tf.int32, shape=(1, opts.context), name='phone')
 pLf0 = tf.placeholder(tf.float32, shape=(1, 1), name='lf0')
 
 with tf.name_scope("Generate"):
+    gather_array = tf.constant((0, 0), shape=(1, 1, 2), dtype=tf.int32)
     # for zeroizing:
-    ms, _ = wavenet([last_sample, user, pPhone, pLf0], opts,
-                    is_training=False)
-    n = opts.n_logits
-    mu = ms[:, :, :n]
-    i_s = tf.abs(ms[:, :, n:n*2]) + 1.0
-    mix_logits = ms[:, :, n*2:]
+    mu, r, mix_logits, _ = wavenet([last_sample, user, pPhone, pLf0],
+                                   opts, is_training=False)
 
     # randomly pick one of the mixtures, with p given by the mixture weights.
     select = tf.random_uniform(shape=())
     pick = tf.cumsum(tf.nn.softmax(mix_logits), axis=2)
     which = tf.reduce_sum(tf.cast(pick < select, tf.int32), axis=2)
-    mu = tf.gather_nd(tf.transpose(mu, (2, 0, 1)), which)
-    i_s = tf.gather_nd(tf.transpose(i_s, (2, 0, 1)), which)
+    which = tf.expand_dims(which, -1)
+    which = tf.concat((gather_array, which), axis=2)
+    mu = tf.gather_nd(mu, which)
+    r = tf.gather_nd(r, which)
 
     # Now sample:
-    x = tf.random_uniform(tf.shape(mu))*0.9999 + 0.0001
-    sample = tf.log(x/(1.0-x))/i_s + mu
-    sample = tf.clip_by_value(sample, -1.0, 1.0)
+    x = tf.random_uniform(
+        tf.shape(r), dtype=tf.float32, minval=opts.sample_skip,
+        maxval=1.0-opts.sample_skip)
+    sample = tf.log(x/(1.0-x))/r + mu
+    clipped = tf.clip_by_value(sample, -1.0, 1.0)
+    sample = tf.expand_dims(sample, -1)
 
 saver = tf.train.Saver(tf.trainable_variables() +
                        tf.get_collection('batch_norm'))
@@ -132,8 +135,8 @@ with tf.name_scope("Zeroize_state"):
                          shape=(1, initial_zeros, opts.context))
     zLf0 = tf.zeros((1, initial_zeros), dtype=tf.float32)
     zero = tf.constant(value=0.0, shape=(1, initial_zeros, 1))
-    zeroize, _ = wavenet([zero, zuser, zalign, zLf0], opts,
-                         reuse=True, pad_reuse=True, is_training=False)
+    zeroize = wavenet([zero, zuser, zalign, zLf0], opts,
+                      reuse=True, pad_reuse=True, is_training=False)[0]
 
 # Finalize the graph, so that any new ops cannot be created.
 # this is good for avoiding memory leaks.
@@ -158,11 +161,11 @@ samples = []
 last_time = time.time()
 for iUser, iPhone, iLf0 in align_iterator(opts.input_alignments,
                                           opts.sample_rate, opts.context):
-    prev_out = sess.run(
-        fetches=sample,
+    prev_out, out = sess.run(
+        fetches=[sample, clipped],
         feed_dict={last_sample: prev_out, pUser: iUser, pPhone: iPhone,
                    pLf0: iLf0})
-    samples.append(prev_out[0, 0, 0])
+    samples.append(out[0, 0])
     if len(samples) % 1000 == 999:
         new_time = time.time()
         print("{} samples generated dt={:.02f}".format(len(samples) + 1,

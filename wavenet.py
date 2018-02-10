@@ -190,14 +190,19 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
         mfcc = layers.conv2d(
             x, num_outputs=opts.skip_dimension,   # ?
             activation_fn=tf.nn.relu, scope='mfcc_layer1')
+        n = opts.n_logits
         x = layers.conv2d(
-            x, num_outputs=opts.n_logits*3,
+            x, num_outputs=n*3,
             normalizer_params=None,
             activation_fn=None, scope='output_layer2')
         mfcc = layers.conv2d(
             mfcc, num_outputs=opts.n_mfcc, normalizer_params=None,
             activation_fn=None, scope='mfcc_layer2')
-    return x, mfcc
+    with tf.name_scope("unpack_output"):
+            mu = x[:, :, :n]
+            r = tf.abs(x[:, :, n:n*2]) + 1.0
+            mix_logits = x[:, :, n*2:]
+    return mu, r, mix_logits, mfcc
 
 
 def compute_overlap(opts):
