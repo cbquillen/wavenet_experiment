@@ -77,6 +77,7 @@ opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
 opts.feature_noise = 1e-6
 opts.n_logits = 2       # The number of logits in the output pdf mixture.
+opts.r_scale = 1000.0   # controls minimum modeled variance.
 
 assert opts.n_logits >= 1
 

@@ -200,7 +200,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
             activation_fn=None, scope='mfcc_layer2')
     with tf.name_scope("unpack_output"):
             mu = x[:, :, :n]
-            r = tf.abs(x[:, :, n:n*2]) + 1.0
+            r = tf.sin(x[:, :, n:n*2]/opts.r_scale)*opts.r_scale
+            r = r*r + 1.0
             mix_logits = x[:, :, n*2:]
     return mu, r, mix_logits, mfcc
 

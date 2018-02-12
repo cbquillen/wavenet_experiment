@@ -49,6 +49,7 @@ opts.n_users = 1
 opts.context = 3      # 2 == biphone, 3 == triphone
 opts.n_mfcc = 20
 opts.n_logits = 2
+opts.r_scale = 1000.0   # controls minimum modeled variance.
 opts.sample_skip = 0.01       # Uniform sample from (this, 1-this).
 
 # Further options *must* come from a parameter file.
