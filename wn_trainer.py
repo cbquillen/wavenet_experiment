@@ -129,13 +129,12 @@ with tf.name_scope("input_massaging"):
 with tf.name_scope("loss"):
     # To control logit magnitude:
     logit_loss = 0.01*tf.reduce_mean(tf.abs(tf.reduce_sum(mix_logits, axis=2)))
-    mix_weight = tf.nn.softmax(mix_logits)
+    mix_weights = tf.nn.softmax(mix_logits) + 1e-6
 
     label_range = slice(1, 1+opts.audio_chunk_size)
     x = batch[:, label_range, :]
     mdelta = -tf.abs(x - mu)*r
-    log_pmix = tf.log(mix_weight*r) + mdelta - \
-        2.0*tf.log(1.0 + tf.exp(mdelta))
+    log_pmix = tf.log(r*mix_weights) + mdelta - 2.0*tf.log(1.0 + tf.exp(mdelta))
     scale = tf.reduce_max(log_pmix, axis=2)
     scaled_pmix = tf.exp(log_pmix - tf.expand_dims(scale, -1))
     loss = tf.reduce_mean(-tf.log(tf.reduce_sum(scaled_pmix, axis=2)) - scale)
