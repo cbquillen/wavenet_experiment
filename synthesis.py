@@ -6,6 +6,8 @@ Carl Quillen
 '''
 
 from __future__ import print_function
+from six.moves import range
+
 import optparse
 import sys
 import time
@@ -47,6 +49,7 @@ opts.n_phones = 41
 opts.n_users = 1
 opts.context = 3      # 2 == biphone, 3 == triphone
 opts.n_mfcc = 20
+opts.r_scale = 1000.0  # Sets the minimum possible variance.
 opts.sample_skip = 0.01       # Uniform sample from (this, 1-this).
 
 # Further options *must* come from a parameter file.
@@ -56,7 +59,7 @@ if opts.param_file is None:
     exit(1)
 
 with open(opts.param_file) as f:
-    exec(f)
+    exec(compile(f.read(), opts.param_file, 'exec'))
 
 opts.n_chunks = 1       # force it for wavenet.
 
@@ -78,14 +81,14 @@ def align_iterator(input_alignments, sample_rate, context):
             assert a.pop(0) == ':'
             alen = (len(a) - 1)//(context+1)
             assert a[alen*context] == ':'
-            frame_labels = np.array(map(int, a[0:alen*context]),
+            frame_labels = np.array([int(_) for _ in a[0:alen*context]],
                                     dtype=np.int32)
             frame_labels = frame_labels.reshape(-1, context)
-            frame_lf0 = np.array(map(float, a[alen*context+1:]),
+            frame_lf0 = np.array([float(_) for _ in a[alen*context+1:]],
                                  dtype=np.float32)
-            repeat_factor = sample_rate/100
-            for i in xrange(frame_labels.shape[0]):
-                for j in xrange(repeat_factor):
+            repeat_factor = sample_rate//100
+            for i in range(frame_labels.shape[0]):
+                for j in range(repeat_factor):
                     yield (user_id, frame_labels[i:i+1, :],
                            frame_lf0[i:i+1].reshape(1, 1))
 

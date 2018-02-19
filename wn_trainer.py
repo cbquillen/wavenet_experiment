@@ -7,6 +7,8 @@ Carl Quillen
 '''
 
 from __future__ import print_function
+from six.moves import range
+from functools import reduce
 
 import optparse
 import sys
@@ -75,13 +77,14 @@ opts.n_mfcc = 20
 opts.mfcc_weight = 0.001
 opts.nopad = False      # True to use training without the padding method.
 opts.dropout = 0.0
-opts.feature_noise = 1e-6
+opts.feature_noise = 0.0
+opts.r_scale = 1000.0   # Controls the minimum possible variance.
 
 
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
     with open(opts.param_file) as f:
-        exec(f)
+        exec(compile(f.read(), opts.param_file, 'exec'))
 
 # smaller audio chunks increase the timesteps per epoch:
 # this is normalized relative to a 100000 sample chunk.
@@ -217,7 +220,7 @@ if opts.input_file is not None:
 # Main training loop:
 last_time = time.time()
 
-for global_step in xrange(opts.lr_offset, opts.max_steps):
+for global_step in range(opts.lr_offset, opts.max_steps):
 
     # Decrease time-step by a factor of 10 for every 5 canonical epochs:
     cur_lr = opts.base_learning_rate*10.0**(

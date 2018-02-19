@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import os
 import random
 import re
@@ -32,9 +34,9 @@ def load_audio_alignments(audio_root_dir, alignment_list_file,
             assert a.pop(0) == ':'
             alen = (len(a) - 1)//(context+1)
             assert a[alen*context] == ':'
-            frame_labels = np.array(map(int, a[0:alen*context]),
+            frame_labels = np.array([int(_) for _ in a[0:alen*context]],
                                     dtype=np.int32)
-            frame_lf0 = np.array(map(float, a[alen*context+1:]),
+            frame_lf0 = np.array([float(_) for _ in a[alen*context+1:]],
                                  dtype=np.float32)
             for i, phone in enumerate(frame_labels):
                 if phone >= iphone:
@@ -60,7 +62,7 @@ def audio_iterator(files, alignments, sample_rate, n_mfcc):
             maxv = np.max(np.abs(audio))
             if maxv > 1e-5:
                 audio *= 1.0/maxv
-            repeat_factor = sample_rate/100
+            repeat_factor = sample_rate//100
             sample_labels = frame_labels.repeat(repeat_factor, axis=0)
             sample_lf0 = frame_lf0.repeat(repeat_factor)
             audio = audio[:sample_labels.shape[0]]  # clip off the excess.
@@ -73,7 +75,7 @@ def audio_iterator(files, alignments, sample_rate, n_mfcc):
                 mfcc.shape[0]
             yield filename, audio, user, sample_labels, sample_lf0, mfcc
 
-        print "Epoch {} ended".format(epoch)
+        print("Epoch {} ended".format(epoch))
         epoch += 1
 
 
@@ -158,7 +160,7 @@ class AudioReader(object):
                     np.array([], dtype=np.float32),
                     np.array([], dtype=np.float32).reshape(0, self.n_mfcc)
                     )]*self.n_chunks
-        # iterator.next() will never stop.  It will allow us to go
+        # next(iterator) will never stop.  It will allow us to go
         # through the data set multiple times.
         iterator = audio_iterator(self.files, self.alignments,
                                   self.sample_rate, self.n_mfcc)
@@ -185,7 +187,7 @@ class AudioReader(object):
                 # is too short.
                 while len(buffer_) < padded_chunk_size + 1:
                     filename, audio, user, alignment, lf0, mfcc = \
-                        iterator.next()
+                        next(iterator)
                     if self.silence_threshold is not None:
                         # Remove silence
                         audio, user, alignment, lf0, mfcc = \

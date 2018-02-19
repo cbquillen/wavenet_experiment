@@ -200,7 +200,8 @@ def wavenet(inputs, opts, is_training=True, reuse=False, pad_reuse=False,
 
     with tf.name_scope("unpack_output"):
         mu = x[:, :, 0]
-        r = tf.abs(x[:, :, 1]) + 1.0
+        r = tf.sin(x[:, :, 1]/opts.r_scale)*opts.r_scale
+        r = r*r + 1.0
         q = 0.999*r*tf.sin(x[:, :, 2])
     return mu, r, q, mfcc
 
