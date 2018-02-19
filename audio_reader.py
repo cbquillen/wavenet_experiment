@@ -158,7 +158,7 @@ class AudioReader(object):
                     np.array([], dtype=np.float32),
                     np.array([], dtype=np.float32).reshape(0, self.n_mfcc)
                     )]*self.n_chunks
-        # iterator.next() will never stop.  It will allow us to go
+        # next(iterator) will never stop.  It will allow us to go
         # through the data set multiple times.
         iterator = audio_iterator(self.files, self.alignments,
                                   self.sample_rate, self.n_mfcc)
@@ -185,7 +185,7 @@ class AudioReader(object):
                 # is too short.
                 while len(buffer_) < padded_chunk_size + 1:
                     filename, audio, user, alignment, lf0, mfcc = \
-                        iterator.next()
+                        next(iterator)
                     if self.silence_threshold is not None:
                         # Remove silence
                         audio, user, alignment, lf0, mfcc = \
