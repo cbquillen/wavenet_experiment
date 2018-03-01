@@ -7,6 +7,8 @@ Carl Quillen
 '''
 
 from __future__ import print_function
+from six.moves import range
+from functools import reduce
 
 import optparse
 import sys
@@ -84,7 +86,7 @@ assert opts.n_logits >= 1
 # Set opts.* parameters from a parameter file if you want:
 if opts.param_file is not None:
     with open(opts.param_file) as f:
-        exec(f)
+        exec(compile(f.read(), opts.param_file, 'exec'))
 
 # smaller audio chunks increase the timesteps per epoch:
 # this is normalized relative to a 100000 sample chunk.
@@ -134,7 +136,8 @@ with tf.name_scope("loss"):
     label_range = slice(1, 1+opts.audio_chunk_size)
     x = batch[:, label_range, :]
     mdelta = -tf.abs(x - mu)*r
-    log_pmix = tf.log(r*mix_weights) + mdelta - 2.0*tf.log(1.0 + tf.exp(mdelta))
+    log_pmix = tf.log(r*mix_weights) + mdelta - \
+        2.0*tf.log(1.0 + tf.exp(mdelta))
     scale = tf.reduce_max(log_pmix, axis=2)
     scaled_pmix = tf.exp(log_pmix - tf.expand_dims(scale, -1))
     loss = tf.reduce_mean(-tf.log(tf.reduce_sum(scaled_pmix, axis=2)) - scale)
@@ -226,7 +229,7 @@ if opts.input_file is not None:
 # Main training loop:
 last_time = time.time()
 
-for global_step in xrange(opts.lr_offset, opts.max_steps):
+for global_step in range(opts.lr_offset, opts.max_steps):
 
     # Decrease time-step by a factor of 10 for every 5 canonical epochs:
     cur_lr = opts.base_learning_rate*10.0**(
